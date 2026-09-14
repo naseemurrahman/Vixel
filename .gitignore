@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+data/
+recordings/
+*.db
+*.db-journal
+.env
+.env.local
+*.log
+.DS_Store
+web/dist/
+server/dist/
+coverage/
+tmp/

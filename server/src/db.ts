@@ -1,0 +1,95 @@
+import fs from "node:fs";
+import path from "node:path";
+import Database from "better-sqlite3";
+import { config } from "./config.js";
+
+fs.mkdirSync(config.dataDir, { recursive: true });
+fs.mkdirSync(config.recordingsDir, { recursive: true });
+
+const dbPath = path.join(config.dataDir, "vixel.db");
+export const db: Database.Database = new Database(dbPath);
+db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS licenses (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  payload TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  installed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cameras (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  rtsp_url TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  segment_seconds INTEGER NOT NULL DEFAULT 300,
+  crf INTEGER NOT NULL DEFAULT 28,
+  codec TEXT NOT NULL DEFAULT 'libx265',
+  preset TEXT NOT NULL DEFAULT 'medium',
+  audio INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS storage_targets (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recordings (
+  id TEXT PRIMARY KEY,
+  camera_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  source_path TEXT,
+  output_path TEXT,
+  bytes_in INTEGER,
+  bytes_out INTEGER,
+  compression_ratio REAL,
+  error TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  FOREIGN KEY (camera_id) REFERENCES cameras(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS uploads (
+  id TEXT PRIMARY KEY,
+  recording_id TEXT NOT NULL,
+  storage_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  remote_path TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  finished_at TEXT,
+  FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE,
+  FOREIGN KEY (storage_id) REFERENCES storage_targets(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  detail TEXT,
+  created_at TEXT NOT NULL
+);
+`);
+
+export function nowIso(): string {
+  return new Date().toISOString();
+}
+
+export function audit(actor: string, action: string, detail?: unknown): void {
+  db.prepare(
+    `INSERT INTO audit_log (actor, action, detail, created_at) VALUES (?, ?, ?, ?)`
+  ).run(actor, action, detail ? JSON.stringify(detail) : null, nowIso());
+}

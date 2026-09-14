@@ -1,0 +1,29 @@
+services:
+  vixel:
+    build: .
+    image: vixel:1.0.0
+    container_name: vixel
+    ports:
+      - "8080:8080"
+    environment:
+      VIXEL_HOST: "0.0.0.0"
+      VIXEL_PORT: "8080"
+      VIXEL_JWT_SECRET: "${VIXEL_JWT_SECRET:-change-me-in-production}"
+      VIXEL_ADMIN_USER: "${VIXEL_ADMIN_USER:-admin}"
+      VIXEL_ADMIN_PASSWORD: "${VIXEL_ADMIN_PASSWORD:-changeme}"
+      VIXEL_CORS_ORIGIN: "*"
+      VIXEL_LICENSE_PUBLIC_KEY: "${VIXEL_LICENSE_PUBLIC_KEY:-}"
+      VIXEL_DATA_DIR: /data
+      VIXEL_RECORDINGS_DIR: /recordings
+    volumes:
+      - vixel-data:/data
+      - vixel-recordings:/recordings
+      # Optional: bind-mount a NAS path for local storage targets
+      # - /mnt/nas/vixel:/recordings/archive
+    restart: unless-stopped
+    # Cameras on the LAN: use host networking on Linux for simplest RTSP reachability
+    # network_mode: host
+
+volumes:
+  vixel-data:
+  vixel-recordings:
