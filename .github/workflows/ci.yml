@@ -1,0 +1,32 @@
+name: Vixel CI
+
+on:
+  push:
+    branches: ["main", "feat/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test --workspace server
+      - run: npm run build -w server
+      - run: npm run build -w web
+
+  ffmpeg-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Verify required filters and encoders
+        run: |
+          ffmpeg -hide_banner -filters | grep -E "mpdecimate|select|hqdn3d"
+          ffmpeg -hide_banner -encoders | grep -E "libx265|libx264|libsvtav1"
