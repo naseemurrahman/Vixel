@@ -89,6 +89,12 @@ http://SERVER_IP:8080
 
 For RTSP camera access on a Linux host, host networking is often the simplest option when Vixel must reach cameras across multiple VLANs/interfaces. If using bridge networking, publish the required ports and ensure the container has routes to the camera networks.
 
+## Vercel dashboard deployment
+
+Vercel can host the React dashboard, but it cannot run the Vixel recorder/API: the API uses SQLite-backed persistent state, FFmpeg, long-running camera processes, and access to the camera network. Those requirements need the Docker deployment above (or another persistent Linux host).
+
+`vercel.json` therefore deploys only the dashboard and deliberately does not create a serverless function. Set `VITE_API_BASE_URL` in the Vercel project to the public HTTPS URL of the separately deployed Vixel API (for example, `https://vixel-api.example.com`). Configure `VIXEL_CORS_ORIGIN` on that API to the Vercel dashboard URL. Do not expose the API publicly without a VPN or authenticated reverse proxy.
+
 ## Local development
 
 Requirements:
