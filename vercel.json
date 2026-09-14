@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "npm ci",
+  "installCommand": "npm ci --include=dev --workspaces",
   "buildCommand": "npm run build --workspace=@vixel/web",
   "outputDirectory": "web/dist",
   "cleanUrls": true
