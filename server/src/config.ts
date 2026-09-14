@@ -26,6 +26,7 @@ export const config = {
   port: Number(env("VIXEL_PORT", "8080")),
   dataDir: path.resolve(root, env("VIXEL_DATA_DIR", "./data")),
   recordingsDir: path.resolve(root, env("VIXEL_RECORDINGS_DIR", "./recordings")),
+  archiveDir: path.resolve(root, env("VIXEL_ARCHIVE_DIR", "./recordings/archive")),
   jwtSecret: requiredRuntimeValue("VIXEL_JWT_SECRET"),
   adminUser: env("VIXEL_ADMIN_USER", "admin"),
   adminPassword: requiredRuntimeValue("VIXEL_ADMIN_PASSWORD"),

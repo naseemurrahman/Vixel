@@ -17,11 +17,12 @@ services:
       VIXEL_LICENSE_PUBLIC_KEY: "${VIXEL_LICENSE_PUBLIC_KEY:-}"
       VIXEL_DATA_DIR: /data
       VIXEL_RECORDINGS_DIR: /recordings
+      VIXEL_ARCHIVE_DIR: /archive
     volumes:
       - vixel-data:/data
       - vixel-recordings:/recordings
-      # Example NAS bind mount:
-      # - /mnt/nas/vixel:/recordings/archive
+      # Set VIXEL_ARCHIVE_HOST_PATH to a host-mounted NAS/SAN directory.
+      - "${VIXEL_ARCHIVE_HOST_PATH:-./archive}:/archive"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]

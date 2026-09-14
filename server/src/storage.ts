@@ -109,8 +109,10 @@ export async function uploadRecordingFile(
   const cfg = JSON.parse(storage.config_json) as Record<string, unknown>;
   if (storage.type === "local") {
     const destDir = path.resolve(String(cfg.path));
-    fs.mkdirSync(destDir, { recursive: true });
     const dest = path.join(destDir, remoteName);
+    // remoteName includes the camera id to keep recordings separated. Create
+    // its parent as well as the archive root before copying to NAS/SAN mounts.
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(localFile, dest);
     return dest;
   }
@@ -160,7 +162,7 @@ export async function uploadRecordingFile(
 
 export function ensureDefaultLocalStorage(): void {
   if (countStorageTargets() > 0) return;
-  const dest = path.join(config.recordingsDir, "archive");
+  const dest = config.archiveDir;
   fs.mkdirSync(dest, { recursive: true });
   db.prepare(
     `INSERT INTO storage_targets (id, name, type, config_json, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?)`
