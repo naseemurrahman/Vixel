@@ -128,10 +128,13 @@ export function CamerasPage() {
         profile: string;
         durationDelta: number;
       }>(`/api/cameras/${id}/capture`, { method: "POST" });
-      alert(
-        `${res.profile}: saved ${res.compressionPercent}%\n` +
-          `In ${(res.bytesIn / 1e6).toFixed(2)} MB → Out ${(res.bytesOut / 1e6).toFixed(2)} MB`
-      );
+      setCaptureResult({
+        profile: res.profile,
+        savings: res.compressionPercent,
+        bytesIn: res.bytesIn,
+        bytesOut: res.bytesOut,
+        durationDelta: res.durationDelta,
+      });
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Capture failed");
