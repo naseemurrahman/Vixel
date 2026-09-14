@@ -1,4 +1,5 @@
 # Vixel
+<<<<<<< HEAD
 
 Secure, lightweight server app that records from IP cameras (RTSP), compresses segments with standards-compliant H.265 / H.264 / AV1 (typically **80%+** size reduction at CRF 28), and uploads to configurable storage (local/NAS, S3/MinIO, SFTP).
 
@@ -120,3 +121,6 @@ web/        Admin UI
 tools/license-gen/   Entitlement signing CLI
 Dockerfile / docker-compose.yml
 ```
+=======
+Rec_Compression
+>>>>>>> 1db2114ea53698778665096965236863faea155e
