@@ -9,7 +9,7 @@ import { config } from "./config.js";
 import { db, nowIso } from "./db.js";
 import { effectiveEntitlements } from "./license.js";
 import { systemLog } from "./logs.js";
-import { listStorageTargets, recordUpload, uploadRecordingFile } from "./storage.js";
+import { listStorageTargets, recordUpload, uploadRecordingWithRetry } from "./storage.js";
 
 type ActiveJob = { cameraId: string; recordingId: string; proc: ReturnType<typeof spawn> };
 const active = new Map<string, ActiveJob>();
@@ -128,18 +128,32 @@ export async function compressSegment(camera: Camera): Promise<{
 
 async function uploadToAllTargets(recordingId: string, cameraId: string, localFile: string): Promise<void> {
   const targets = listStorageTargets().filter((t) => t.enabled);
+  if (targets.length === 0) {
+    systemLog("warn", "storage", "No enabled storage targets; compressed output remains in staging", { recordingId });
+    return;
+  }
   const base = path.basename(localFile);
   const remoteName = `${cameraId}/${base}`;
+  let failures = 0;
   for (const target of targets) {
     try {
-      const remote = await uploadRecordingFile(target, localFile, remoteName);
+      const remote = await uploadRecordingWithRetry(target, localFile, remoteName);
       recordUpload(recordingId, target.id, "uploaded", remote);
-      db.prepare(`UPDATE recordings SET status="uploaded" WHERE id=?`).run(recordingId);
     } catch (e) {
+      failures += 1;
       const msg = e instanceof Error ? e.message : String(e);
       recordUpload(recordingId, target.id, "failed", undefined, msg);
+      systemLog("error", "storage", "Recording upload failed after retries", {
+        recordingId, targetId: target.id, target: target.name, error: msg,
+      });
     }
   }
+  // "uploaded" means every configured target confirmed the file. A partial
+  // delivery must remain visible to operators instead of being marked healthy.
+  db.prepare(`UPDATE recordings SET status=? WHERE id=?`).run(
+    failures === 0 ? "uploaded" : "upload_failed",
+    recordingId
+  );
 }
 
 export function stopCameraJob(cameraId: string): boolean {

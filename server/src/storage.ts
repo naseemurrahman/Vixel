@@ -113,7 +113,12 @@ export async function uploadRecordingFile(
     // remoteName includes the camera id to keep recordings separated. Create
     // its parent as well as the archive root before copying to NAS/SAN mounts.
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(localFile, dest);
+    // A recording must never appear at the archive path while it is only
+    // partially copied. Renaming within one filesystem is atomic on the
+    // Linux/NAS filesystems supported by the local target.
+    const partial = `${dest}.partial-${nanoid(8)}`;
+    fs.copyFileSync(localFile, partial);
+    fs.renameSync(partial, dest);
     return dest;
   }
   if (storage.type === "s3") {
@@ -128,12 +133,13 @@ export async function uploadRecordingFile(
     });
     const keyPrefix = cfg.prefix ? String(cfg.prefix).replace(/\/?$/, "/") : "";
     const key = `${keyPrefix}${remoteName}`;
-    const body = fs.readFileSync(localFile);
+    const body = fs.createReadStream(localFile);
     await client.send(
       new PutObjectCommand({
         Bucket: String(cfg.bucket),
         Key: key,
         Body: body,
+        ContentLength: fs.statSync(localFile).size,
         ContentType: "video/mp4",
       })
     );
@@ -151,13 +157,43 @@ export async function uploadRecordingFile(
       });
       const remoteDir = String(cfg.remoteDir).replace(/\/?$/, "/");
       const remotePath = `${remoteDir}${remoteName}`;
-      await sftp.put(localFile, remotePath);
+      // Upload to a temporary object then rename it. Consumers of the NVR or
+      // archive never receive a partially uploaded segment at its final path.
+      await sftp.mkdir(path.posix.dirname(remotePath), true);
+      const partial = `${remotePath}.partial-${nanoid(8)}`;
+      await sftp.put(localFile, partial);
+      await sftp.rename(partial, remotePath);
       return remotePath;
     } finally {
       await sftp.end().catch(() => undefined);
     }
   }
   throw new Error(`Unsupported storage type ${storage.type}`);
+}
+
+/**
+ * Storage targets are usually remote or mounted appliances. Retry transient
+ * failures here rather than declaring a healthy recording delivered after the
+ * first network hiccup. The caller retains the local output for later repair.
+ */
+export async function uploadRecordingWithRetry(
+  storage: StorageTarget,
+  localFile: string,
+  remoteName: string,
+  attempts = 3
+): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await uploadRecordingFile(storage, localFile, remoteName);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export function ensureDefaultLocalStorage(): void {

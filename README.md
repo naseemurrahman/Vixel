@@ -63,6 +63,10 @@ The `zipstream` name means **Zipstream-inspired**, not Axis Zipstream. Vixel is 
 - **Input:** RTSP / RTSPS
 - **Output:** MP4, H.265/H.264/AV1
 
+See [the production architecture](PRODUCTION_ARCHITECTURE.md) for the edge
+pipeline, mathematically defined compression constraints, storage/NVR delivery
+semantics, and the safe role of optional AI inference.
+
 ## Linux deployment
 
 Requirements:
