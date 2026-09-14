@@ -63,6 +63,43 @@ import {
   UpdateUserSchema,
 } from "./users.js";
 
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_BLOCK_MS = 15 * 60 * 1000;
+
+type LoginAttempt = { failures: number[]; blockedUntil: number };
+const loginAttempts = new Map<string, LoginAttempt>();
+
+function loginAttemptKey(req: { ip: string }, username: string): string {
+  // Both values are only used as an in-memory throttle key, never for
+  // authorization. Username is normalized to prevent trivial bypasses.
+  return `${req.ip}:${username.trim().toLowerCase()}`;
+}
+
+function isLoginBlocked(key: string, now: number): boolean {
+  const attempt = loginAttempts.get(key);
+  if (!attempt) return false;
+  if (attempt.blockedUntil > now) return true;
+  attempt.failures = attempt.failures.filter((time) => time > now - LOGIN_WINDOW_MS);
+  if (attempt.failures.length === 0) loginAttempts.delete(key);
+  return false;
+}
+
+function registerFailedLogin(key: string, now: number): void {
+  const attempt = loginAttempts.get(key) ?? { failures: [], blockedUntil: 0 };
+  attempt.failures = attempt.failures.filter((time) => time > now - LOGIN_WINDOW_MS);
+  attempt.failures.push(now);
+  if (attempt.failures.length >= LOGIN_MAX_ATTEMPTS) {
+    attempt.blockedUntil = now + LOGIN_BLOCK_MS;
+    attempt.failures = [];
+  }
+  loginAttempts.set(key, attempt);
+}
+
+function clearFailedLogins(key: string): void {
+  loginAttempts.delete(key);
+}
+
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/health", async () => ({
     ok: true,
@@ -71,14 +108,30 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   }));
 
   app.post("/api/auth/login", async (req, reply) => {
-    const body = z
-      .object({ username: z.string(), password: z.string() })
-      .parse(req.body);
+    const parsed = z
+      .object({
+        username: z.string().trim().min(1).max(64),
+        password: z.string().min(1).max(128),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Enter a username and password" });
+    }
+    const body = parsed.data;
+    const key = loginAttemptKey(req, body.username);
+    const now = Date.now();
+    if (isLoginBlocked(key, now)) {
+      return reply.code(429).header("Retry-After", String(LOGIN_BLOCK_MS / 1000)).send({
+        error: "Too many sign-in attempts. Try again later.",
+      });
+    }
     const user = authenticateUser(body.username, body.password);
     if (!user) {
-      systemLog("warn", "auth", "Failed login", { username: body.username });
+      registerFailedLogin(key, now);
+      systemLog("warn", "auth", "Failed login", { username: body.username, ip: req.ip });
       return reply.code(401).send({ error: "Invalid credentials" });
     }
+    clearFailedLogins(key);
     const token = await reply.jwtSign({
       sub: user.username,
       role: user.role,

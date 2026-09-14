@@ -25,7 +25,10 @@ async function main() {
 
   const app = Fastify({
     logger: true,
-    trustProxy: true,
+    // Do not trust client-supplied X-Forwarded-* headers by default. Set a
+    // specific trusted reverse-proxy address here if the API is later placed
+    // behind one.
+    trustProxy: false,
   });
 
   await app.register(cors, {

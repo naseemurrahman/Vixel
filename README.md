@@ -87,6 +87,22 @@ Open:
 http://SERVER_IP:8080
 ```
 
+The initial administrator is created only on the first start, so changing
+`VIXEL_ADMIN_PASSWORD` later does not overwrite an existing account. If that
+password is lost, reset it deliberately from the server host (this requires
+access to the Docker host):
+
+```bash
+docker compose exec -T \
+  -e VIXEL_RESET_ADMIN_PASSWORD='a-new-unique-password-at-least-16-characters' \
+  vixel npm run admin:reset
+```
+
+Use a password manager to generate a unique value, then remove the temporary
+environment variable from your shell history. This command only changes an
+existing active administrator; it never creates an account or exposes a
+password over the network.
+
 For RTSP camera access on a Linux host, host networking is often the simplest option when Vixel must reach cameras across multiple VLANs/interfaces. If using bridge networking, publish the required ports and ensure the container has routes to the camera networks.
 
 ## Vercel dashboard deployment
