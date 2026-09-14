@@ -126,6 +126,7 @@ export function CamerasPage() {
         bytesIn: number;
         bytesOut: number;
         profile: string;
+        durationDelta: number;
       }>(`/api/cameras/${id}/capture`, { method: "POST" });
       alert(
         `${res.profile}: saved ${res.compressionPercent}%\n` +
