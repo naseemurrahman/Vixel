@@ -1,27 +1,36 @@
 services:
   vixel:
-    build: .
-    image: vixel:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vixel:adaptive
     container_name: vixel
     ports:
       - "8080:8080"
     environment:
       VIXEL_HOST: "0.0.0.0"
       VIXEL_PORT: "8080"
-      VIXEL_JWT_SECRET: "${VIXEL_JWT_SECRET:-change-me-in-production}"
+      VIXEL_JWT_SECRET: "${VIXEL_JWT_SECRET:?Set VIXEL_JWT_SECRET}"
       VIXEL_ADMIN_USER: "${VIXEL_ADMIN_USER:-admin}"
-      VIXEL_ADMIN_PASSWORD: "${VIXEL_ADMIN_PASSWORD:-changeme}"
-      VIXEL_CORS_ORIGIN: "*"
+      VIXEL_ADMIN_PASSWORD: "${VIXEL_ADMIN_PASSWORD:?Set VIXEL_ADMIN_PASSWORD}"
+      VIXEL_CORS_ORIGIN: "${VIXEL_CORS_ORIGIN:-http://localhost:8080}"
       VIXEL_LICENSE_PUBLIC_KEY: "${VIXEL_LICENSE_PUBLIC_KEY:-}"
       VIXEL_DATA_DIR: /data
       VIXEL_RECORDINGS_DIR: /recordings
     volumes:
       - vixel-data:/data
       - vixel-recordings:/recordings
-      # Optional: bind-mount a NAS path for local storage targets
+      # Example NAS bind mount:
       # - /mnt/nas/vixel:/recordings/archive
     restart: unless-stopped
-    # Cameras on the LAN: use host networking on Linux for simplest RTSP reachability
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # For Linux hosts with cameras on multiple routed/VLAN networks, host
+    # networking can simplify RTSP reachability:
     # network_mode: host
 
 volumes:
