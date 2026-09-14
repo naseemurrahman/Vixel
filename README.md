@@ -1,34 +1,101 @@
 # Vixel
-<<<<<<< HEAD
 
-Secure, lightweight server app that records from IP cameras (RTSP), compresses segments with standards-compliant H.265 / H.264 / AV1 (typically **80%+** size reduction at CRF 28), and uploads to configurable storage (local/NAS, S3/MinIO, SFTP).
+Vixel is an open, vendor-neutral IP-camera recording compressor for Linux servers. It ingests RTSP streams from cameras of different brands and produces standards-based recordings with content-aware temporal and spatial compression.
 
-Licensing is **entitlement-based**, not fixed SKUs: any camera count, storage-target limit, concurrency, feature flags, and expiry can be signed into a key.
+The design target is **80%+ storage reduction on suitable static/low-motion scenes**, while measuring the actual result for every recording. It does not depend on Axis Zipstream or a proprietary camera API.
 
-## Stack
+## Compression model
 
-- **Server**: Node.js 20 + Fastify + SQLite
-- **UI**: React (Vite)
-- **Media**: FFmpeg (TCP RTSP ingest → MP4)
-- **Deploy**: Docker (Linux servers & Windows via Docker Desktop)
+Vixel uses a layered model:
 
-## Quick start (Docker)
+1. **Same-window baseline** — capture the camera bitstream with FFmpeg stream copy. This establishes `bytes_in` for the exact recording interval.
+2. **Scene-aware temporal reduction** — quiet scenes are sampled less frequently; motion/scene changes retain the full cadence. The source presentation timestamps are preserved.
+3. **Near-duplicate removal** — FFmpeg `mpdecimate` removes frames that are materially redundant.
+4. **GoV / GOP optimization** — long keyframe intervals reduce expensive I-frames; scene cuts can still force an I-frame.
+5. **I/P/B prediction** — adaptive B-frames and reference frames reuse spatial and temporal information.
+6. **Adaptive quantization** — more bits are allocated where detail and motion matter.
+7. **Standards-based output** — H.265, H.264, or AV1 can be selected.
+
+### Storage-savings equation
+
+```text
+savings_ratio = 1 - (bytes_out / bytes_in)
+savings_percent = savings_ratio × 100
+```
+
+The application records the measured result; it does not report an estimated percentage as if it were guaranteed.
+
+### Why 80% is a target, not a promise
+
+Compression is bounded by the source. If a camera is already using an efficient low-bitrate H.265 stream, another 80% reduction may require either lower visual quality or lower temporal resolution. Vixel therefore uses an adaptive strategy and exposes the real measured savings.
+
+For static scenes, temporal redundancy is the strongest opportunity. For moving scenes, Vixel automatically preserves more frames and relies more heavily on inter-frame prediction and adaptive quantization.
+
+## Timestamp correctness
+
+A previous implementation used:
+
+```text
+setpts=N/FRAME_RATE/TB
+```
+
+after frame decimation. That is unsafe for surveillance because removing frames and then rebuilding timestamps from frame count can shorten the apparent recording.
+
+Vixel now keeps the original PTS and writes the compressed video as **VFR**. A post-encode FFprobe check compares input and output duration and rejects materially shortened recordings.
+
+## Profiles
+
+| Profile | Purpose | Default GoV | B-frames | CRF | Static sampling |
+|---|---|---:|---:|---:|---:|
+| `zipstream` | Maximum storage efficiency | 300 | 8 | 30 | 1/5 + motion recovery |
+| `balanced` | Mixed activity | 150 | 5 | 28 | 1/3 + motion recovery |
+| `forensic` | Detail-first evidence | 60 | 3 | 24 | Full cadence |
+
+The `zipstream` name means **Zipstream-inspired**, not Axis Zipstream. Vixel is an independent open implementation using FFmpeg primitives.
+
+## Architecture
+
+- **Server:** Node.js 20, TypeScript, Fastify, SQLite
+- **Media:** FFmpeg + FFprobe
+- **UI:** React + Vite
+- **Deployment:** Linux/Docker
+- **Storage:** local/NAS, S3/MinIO, SFTP
+- **Input:** RTSP / RTSPS
+- **Output:** MP4, H.265/H.264/AV1
+
+## Linux deployment
+
+Requirements:
+
+- Linux host
+- Docker Engine + Docker Compose
+- Network access from the Vixel host/container to the camera VLAN
+- FFmpeg/FFprobe are included in the production container
+
+### Docker
 
 ```bash
-# Linux or Windows (Docker Desktop)
 cp .env.example .env
-# edit VIXEL_ADMIN_PASSWORD and VIXEL_JWT_SECRET
+# Set a strong VIXEL_ADMIN_PASSWORD and VIXEL_JWT_SECRET.
 
 docker compose up -d --build
 ```
 
-Open http://localhost:8080 — default login `admin` / `changeme`.
+Open:
 
-Cameras must be reachable from the container (same LAN / VPN). On Linux you can uncomment `network_mode: host` in `docker-compose.yml` for simplest RTSP access.
+```text
+http://SERVER_IP:8080
+```
+
+For RTSP camera access on a Linux host, host networking is often the simplest option when Vixel must reach cameras across multiple VLANs/interfaces. If using bridge networking, publish the required ports and ensure the container has routes to the camera networks.
 
 ## Local development
 
-Requirements: Node 20+, FFmpeg on PATH.
+Requirements:
+
+- Node.js 20+
+- FFmpeg
+- FFprobe
 
 ```bash
 npm install
@@ -36,91 +103,112 @@ cp .env.example .env
 npm run dev
 ```
 
-- API: http://localhost:8080  
-- UI (Vite): http://localhost:5173  
+API: `http://localhost:8080`
 
-## Flexible licenses
+UI: `http://localhost:5173`
 
-Generate a keypair (once per deployment / product line):
+## Camera configuration
 
-```bash
-npm run license:gen -- --gen-keypair ./keys/vixel
-```
+A camera can be configured with:
 
-Put the **public** key in `VIXEL_LICENSE_PUBLIC_KEY` (PEM; use `\n` for newlines in `.env`).
+- RTSP/RTSPS URL
+- Segment length
+- Codec
+- Encoder preset
+- CRF
+- Compression profile
+- GoV/GOP size
+- B-frame count
+- Static-frame reduction
+- Optional audio
 
-Issue any entitlement mix:
+The same compression engine is used regardless of camera vendor. Axis, Hikvision, Dahua, Uniview and other RTSP-capable cameras are treated as standards-based media sources rather than vendor-specific integrations.
 
-```bash
-npm run license:gen -- \
-  --private-key ./keys/vixel.priv.pem \
-  --customer "North Site" \
-  --max-cameras 47 \
-  --max-storage 5 \
-  --max-jobs 8 \
-  --features local-storage,s3,sftp,api \
-  --days 365 \
-  --notes "Custom site pack"
-```
+## Operational safeguards
 
-Paste the `VIXEL1....` string in **License** in the UI.
+Vixel records:
 
-Unlicensed evaluation mode allows **1 camera**. Dev mode (no public key set) auto-installs a generous local license.
+- Input bytes
+- Output bytes
+- Measured compression percentage
+- Input duration
+- Output duration
+- Duration delta
+- Compression profile
+- GoV/B-frame settings
+- Compression errors
 
-### Entitlement fields
-
-| Field | Meaning |
-|-------|---------|
-| `maxCameras` | Hard cap on configured cameras |
-| `maxStorageTargets` | Cap on upload destinations |
-| `maxConcurrentJobs` | Parallel FFmpeg jobs |
-| `features` | `local-storage`, `s3`, `sftp`, `api`, or `*` |
-| `expiresAt` | ISO date or null |
+A segment is rejected when its output duration differs materially from the captured source duration.
 
 ## Roles
 
 | Role | Access |
-|------|--------|
-| **admin** | Users, license install, settings, full operations |
-| **operator** | Cameras, storage, capture, acknowledge alerts, view license |
-| **viewer** | Dashboards, usage, performance, logs, recordings (read-only) |
+|---|---|
+| **admin** | Users, license, settings, all operations |
+| **operator** | Cameras, storage, capture, alerts |
+| **viewer** | Read-only dashboards, usage, performance, logs, recordings |
 
-Default admin is created from `VIXEL_ADMIN_USER` / `VIXEL_ADMIN_PASSWORD` on first boot.
+## Storage targets
 
-## UI pages
+Supported targets include:
 
-Dashboard · Performance (live charts) · Usage · Alerts · Logs · Cameras · Storage · Recordings · Profile · Users · License · Settings · Help
+- Local filesystem
+- NAS/local mounted storage
+- S3-compatible storage such as MinIO
+- SFTP
 
+Compressed recordings can be uploaded after successful validation.
 
-- Change admin password and JWT secret before production.
-- Prefer RTSP over trusted networks / VLAN; store credentials only in server DB.
-- License files are ECDSA P-256 signed; keep the private key offline.
-- API routes (except health + login) require JWT Bearer auth.
+## Production security
 
-## Compression (Zipstream-inspired, open)
+Before production:
 
-Works with **any RTSP camera brand**. Pipeline:
-
-1. Capture camera bitstream (`ffmpeg -c copy`) → **bytes_in**
-2. Re-encode with open Zipstream-class tools:
-   - **GoV / GOP** — long gap between I-frames when still; scenecut inserts I on motion
-   - **P/B frames** — adaptive B-frames + refs reuse static background
-   - **mpdecimate** — drop near-duplicate frames in static scenes
-   - **AQ mode 3** — spend bits on motion/texture, not flat walls
-3. **Savings** = `1 - bytes_out / bytes_in` (measured, not estimated)
-
-Profiles: `zipstream` (default, ≥80% on static), `balanced`, `forensic`.
-
-Output is standards **MP4** (H.265/H.264/AV1) so any player can decode it. After each segment, Vixel uploads to all enabled storage targets.
+1. Change the default admin password.
+2. Set a long random JWT secret.
+3. Restrict CORS to the management UI origin instead of `*`.
+4. Keep RTSP camera networks isolated from public networks.
+5. Prefer RTSPS where supported.
+6. Do not expose the Vixel management API directly to the Internet; place it behind a VPN or reverse proxy with TLS and access controls.
+7. Back up the SQLite database and configuration.
+8. Monitor CPU, disk, failed jobs and compression savings.
 
 ## Project layout
 
+```text
+server/
+  src/
+    cameras.ts
+    compress.ts
+    compression-strategy.ts
+    routes.ts
+    storage.ts
+    metrics.ts
+    users.ts
+    license.ts
+
+web/
+  src/
+    pages/
+
+tools/
+  license-gen/
+
+Dockerfile
+docker-compose.yml
 ```
-server/     API, license, cameras, FFmpeg worker, storage adapters
-web/        Admin UI
-tools/license-gen/   Entitlement signing CLI
-Dockerfile / docker-compose.yml
-```
-=======
-Rec_Compression
->>>>>>> 1db2114ea53698778665096965236863faea155e
+
+## Roadmap
+
+- Hardware-accelerated H.265/AV1 profiles for Intel, NVIDIA and AMD
+- Per-camera adaptive CRF controller
+- Motion/ROI maps for high-value regions
+- Two-stage analysis mode for long static intervals
+- Storage forecasting per camera/site
+- Prometheus metrics
+- Worker queues for enterprise deployments
+- Optional object-aware ROI without requiring a camera vendor SDK
+- Automated quality-regression tests using reference surveillance clips
+
+## License
+
+See the repository license and entitlement implementation for deployment-specific licensing.
