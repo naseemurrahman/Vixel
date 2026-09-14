@@ -1,14 +1,12 @@
 /**
- * Open, brand-agnostic compression inspired by Axis Zipstream concepts.
+ * Vixel adaptive, vendor-neutral surveillance compression strategy.
  *
- * Goals (static scenes → typically ≥80% size reduction vs camera bitstream):
- * 1. Dynamic temporal sampling — drop near-duplicate frames (mpdecimate)
- * 2. Long GoV / GOP — fewer I-frames when the scene is still; scenecut inserts I on motion
- * 3. Adaptive B/P structure — b-adapt + refs so predictors reuse static background
- * 4. Spatial AQ — spend bits on textured/moving regions, starve flat walls
- * 5. Standards codecs only (H.265 / H.264 / AV1) — any player can decode
+ * The engine combines temporal redundancy reduction (scene-aware sampling
+ * and near-duplicate removal) with spatial redundancy reduction (H.265/H.264/AV1,
+ * long GoV/GOP, I/P/B prediction, reference frames and adaptive quantization).
  *
- * Works with any RTSP camera (Axis, Hikvision, Dahua, Uniview, ONVIF, etc.).
+ * 80%+ is a measurable target for sufficiently high-bitrate static/low-motion
+ * sources, not a quality-independent guarantee. Actual savings are measured.
  */
 
 export const COMPRESSION_PROFILES = ["zipstream", "balanced", "forensic"] as const;
@@ -33,204 +31,125 @@ export type StrategyPlan = {
   x264Params: string;
   svtav1Params: string[];
   expectedStaticSavings: string;
+  staticFrameStride: number;
+  motionThreshold: number;
 };
 
-const PROFILE_META: Record<
-  CompressionProfile,
-  { description: string; expectedStaticSavings: string; defaultGop: number; defaultB: number; defaultCrf: number }
-> = {
+const PROFILE_META: Record<CompressionProfile, {
+  description: string;
+  expectedStaticSavings: string;
+  defaultGop: number;
+  defaultB: number;
+  defaultCrf: number;
+  staticFrameStride: number;
+  motionThreshold: number;
+}> = {
   zipstream: {
-    description:
-      "Zipstream-class: drop static duplicates, long GoV, strong AQ — best for quiet scenes (≥80% typical).",
-    expectedStaticSavings: "80–95% on static / low-motion scenes",
-    defaultGop: 300,
-    defaultB: 8,
-    defaultCrf: 30,
+    description: "Aggressive adaptive profile: scene-aware static sampling + long GoV + P/B + AQ.",
+    expectedStaticSavings: "Target >=80% on sufficiently high-bitrate static/low-motion sources",
+    defaultGop: 300, defaultB: 8, defaultCrf: 30, staticFrameStride: 5, motionThreshold: 0.008,
   },
   balanced: {
-    description: "Moderate GoV and light frame decimation — good default for mixed activity.",
-    expectedStaticSavings: "65–85% depending on motion",
-    defaultGop: 120,
-    defaultB: 4,
-    defaultCrf: 28,
+    description: "Adaptive mixed-scene profile with moderate temporal reduction and strong inter-frame prediction.",
+    expectedStaticSavings: "Typically 60-85% depending on source bitrate and motion",
+    defaultGop: 150, defaultB: 5, defaultCrf: 28, staticFrameStride: 3, motionThreshold: 0.012,
   },
   forensic: {
-    description: "Shorter GoV, no frame drop — prioritize detail over size.",
-    expectedStaticSavings: "40–70%",
-    defaultGop: 60,
-    defaultB: 3,
-    defaultCrf: 24,
+    description: "Evidence-oriented profile: preserves full frame cadence and favors detail.",
+    expectedStaticSavings: "Typically 35-70% depending on source bitrate and codec",
+    defaultGop: 60, defaultB: 3, defaultCrf: 24, staticFrameStride: 1, motionThreshold: 0.010,
   },
 };
 
-export function profileDefaults(profile: CompressionProfile) {
-  return PROFILE_META[profile];
+export function profileDefaults(profile: CompressionProfile) { return PROFILE_META[profile]; }
+
+function adaptiveTemporalFilter(profile: CompressionProfile): string {
+  const meta = PROFILE_META[profile];
+  if (meta.staticFrameStride <= 1) return "";
+  const stride = meta.staticFrameStride;
+  const threshold = meta.motionThreshold.toFixed(4);
+  // select() keeps every frame during detected motion and samples every Nth
+  // frame when the scene is quiet. Input PTS is preserved; there is no setpts.
+  return [
+    "hqdn3d=1.2:1.2:2.4:2.4",
+    "select=if(gt(scene\\," + threshold + ")\\,1\\,eq(mod(n\\," + stride + ")\\,0))",
+  ].join(",");
 }
 
-/**
- * Build mpdecimate filter tuned per profile.
- * hi/lo are SSD thresholds (scaled); frac is proportion of blocks that must change.
- * Static lobby/corridor → most frames discarded → large bitrate collapse.
- */
-function decimateFilter(profile: CompressionProfile): string {
-  if (profile === "zipstream") {
-    // Aggressive: drop frames that barely change
-    return "mpdecimate=hi=64*12:lo=64*7:frac=0.12";
-  }
-  if (profile === "balanced") {
-    return "mpdecimate=hi=64*14:lo=64*9:frac=0.2";
-  }
+function duplicateFilter(profile: CompressionProfile): string {
+  if (profile === "zipstream") return "mpdecimate=hi=768:lo=448:frac=0.12:max=20";
+  if (profile === "balanced") return "mpdecimate=hi=896:lo=576:frac=0.18:max=10";
   return "";
 }
 
-/**
- * GoV math (open model of Zipstream dynamic GOP):
- * - keyint = max distance between I-frames (long when static → many cheap P/B frames)
- * - min-keyint = floor; scenecut can still force an I when motion spikes
- * - bframes / b-adapt = bidirectional predictors (high reuse on static background)
- */
-function govParams(gop: number, bframes: number, profile: CompressionProfile): {
-  x265: string;
-  x264: string;
-} {
+function govParams(gop: number, bframes: number, profile: CompressionProfile) {
   const minKey = Math.max(1, Math.floor(gop / 10));
-  const scenecut = profile === "forensic" ? 70 : profile === "zipstream" ? 45 : 50;
+  const scenecut = profile === "forensic" ? 55 : 45;
   const refs = profile === "zipstream" ? 5 : 4;
-  const aq = profile === "forensic" ? 2 : 3; // 3 = auto-variance (spatial Zipstream-like)
+  const aqMode = profile === "forensic" ? 2 : 3;
   const lookahead = profile === "zipstream" ? 40 : 25;
-
-  const x265 = [
-    `keyint=${gop}`,
-    `min-keyint=${minKey}`,
-    `bframes=${bframes}`,
-    `b-adapt=2`,
-    `ref=${refs}`,
-    `rc-lookahead=${lookahead}`,
-    `aq-mode=${aq}`,
-    `aq-strength=${profile === "zipstream" ? "1.2" : "1.0"}`,
-    `scenecut=${scenecut}`,
-    `open-gop=0`,
-    `repeat-headers=1`,
-    `strong-intra-smoothing=1`,
-    `weightp=2`,
-    `me=umh`,
-    `subme=${profile === "forensic" ? 7 : 5}`,
-    `psy-rd=1.0`,
-    `sao=1`,
-  ].join(":");
-
-  const x264 = [
-    `keyint=${gop}`,
-    `min-keyint=${minKey}`,
-    `bframes=${bframes}`,
-    `b-adapt=2`,
-    `ref=${refs}`,
-    `rc-lookahead=${lookahead}`,
-    `aq-mode=${aq}`,
-    `aq-strength=${profile === "zipstream" ? "1.2" : "1.0"}`,
-    `scenecut=${scenecut}`,
-    `open-gop=0`,
-    `weightp=2`,
-    `me=umh`,
-    `subme=${profile === "forensic" ? 9 : 7}`,
-  ].join(":");
-
-  return { x265, x264 };
+  const common = [
+    "b-adapt=2", `bframes=${bframes}`, `keyint=${gop}`, `min-keyint=${minKey}`,
+    `ref=${refs}`, `rc-lookahead=${lookahead}`, `aq-mode=${aqMode}`,
+    `aq-strength=${profile === "zipstream" ? "1.25" : "1.0"}`, `scenecut=${scenecut}`,
+  ];
+  return {
+    x265: [...common, "open-gop=0", "repeat-headers=1", "strong-intra-smoothing=1", "weightp=2", "me=umh", "subme=5", "psy-rd=1.0", "sao=1"].join(":"),
+    x264: [...common, "open-gop=0", "weightp=2", "me=umh", "subme=7"].join(":"),
+  };
 }
 
 export function buildStrategy(input: StrategyInput): StrategyPlan {
   const meta = PROFILE_META[input.profile];
   const filters: string[] = [];
-
-  const decimate = input.mpdecimate ? decimateFilter(input.profile) : "";
-  if (decimate) {
-    // Drop near-duplicates then normalize PTS so decoders see continuous VFR-friendly stream
-    filters.push(decimate);
-    filters.push("setpts=N/FRAME_RATE/TB");
+  if (input.mpdecimate) {
+    const temporal = adaptiveTemporalFilter(input.profile);
+    if (temporal) filters.push(temporal);
+    const duplicate = duplicateFilter(input.profile);
+    if (duplicate) filters.push(duplicate);
   }
-
-  // Mild denoise helps P/B prediction on noisy IP cams without smearing forensics too hard
-  if (input.profile === "zipstream") {
-    filters.push("hqdn3d=1.5:1.5:3:3");
-  } else if (input.profile === "balanced") {
-    filters.push("hqdn3d=0.8:0.8:2:2");
-  }
-
   const gov = govParams(input.gopSize, input.bframes, input.profile);
-
-  // SVT-AV1 uses different knobs but same GoV idea
-  const svt = [
-    `-g`,
-    String(input.gopSize),
-    `-keyint_min`,
-    String(Math.max(1, Math.floor(input.gopSize / 10))),
-    `-svtav1-params`,
-    `lookahead=${input.profile === "zipstream" ? 40 : 20}:aq-mode=2`,
-  ];
-
   return {
-    name: input.profile,
-    description: meta.description,
-    videoFilters: filters,
-    x265Params: gov.x265,
-    x264Params: gov.x264,
-    svtav1Params: svt,
-    expectedStaticSavings: meta.expectedStaticSavings,
+    name: input.profile, description: meta.description, videoFilters: filters,
+    x265Params: gov.x265, x264Params: gov.x264,
+    svtav1Params: ["-g", String(input.gopSize), "-keyint_min", String(Math.max(1, Math.floor(input.gopSize / 10))),
+      "-svtav1-params", `lookahead=${input.profile === "zipstream" ? 40 : 20}:aq-mode=2`],
+    expectedStaticSavings: meta.expectedStaticSavings, staticFrameStride: meta.staticFrameStride,
+    motionThreshold: meta.motionThreshold,
   };
 }
 
-/** FFmpeg output args after `-i <source>` for the encode stage */
+/** FFmpeg output arguments after -i <source>. */
 export function buildEncodeArgs(input: StrategyInput): string[] {
   const plan = buildStrategy(input);
   const args: string[] = [];
-
-  if (plan.videoFilters.length) {
-    args.push("-vf", plan.videoFilters.join(","));
-  }
-
-  args.push("-c:v", input.codec, "-preset", input.preset, "-crf", String(input.crf), "-pix_fmt", "yuv420p");
-
-  if (input.codec === "libx265") {
-    args.push("-tag:v", "hvc1", "-x265-params", plan.x265Params);
-  } else if (input.codec === "libx264") {
-    args.push("-x264-params", plan.x264Params);
-  } else if (input.codec === "libsvtav1") {
-    args.push(...plan.svtav1Params);
-  }
-
-  args.push("-movflags", "+faststart");
-
-  if (input.audio) {
-    args.push("-c:a", "aac", "-b:a", "64k", "-ac", "1");
-  } else {
-    args.push("-an");
-  }
-
+  if (plan.videoFilters.length) args.push("-vf", plan.videoFilters.join(","));
+  args.push("-map", "0:v:0", "-c:v", input.codec, "-preset", input.preset, "-crf", String(input.crf), "-pix_fmt", "yuv420p");
+  if (input.codec === "libx265") args.push("-tag:v", "hvc1", "-x265-params", plan.x265Params);
+  else if (input.codec === "libx264") args.push("-x264-params", plan.x264Params);
+  else if (input.codec === "libsvtav1") args.push(...plan.svtav1Params);
+  // VFR is intentional: dropped static frames retain their source PTS.
+  args.push("-fps_mode", "vfr", "-movflags", "+faststart");
+  if (input.audio) args.push("-map", "0:a:0?", "-c:a", "aac", "-b:a", "64k", "-ac", "1");
+  else args.push("-an");
   return args;
 }
 
 export function listStrategyDocs() {
-  return COMPRESSION_PROFILES.map((id) => ({
-    id,
-    ...PROFILE_META[id],
-    techniques: [
-      "I/P/B frame structure (GoV)",
-      "Scene-cut aware keyframes",
-      "Static-frame decimation (mpdecimate)",
-      "Adaptive quantization (AQ)",
-      "Standards-compliant decode (H.265/H.264/AV1)",
-    ],
-  }));
+  return COMPRESSION_PROFILES.map((id) => {
+    const meta = PROFILE_META[id];
+    return { id, ...meta, techniques: [
+      "Scene-change score driven temporal sampling", "Near-duplicate frame removal",
+      "I/P/B GoV with adaptive B-frame placement", "Long keyframe interval with motion-aware scenecut",
+      "Reference-frame reuse", "Adaptive quantization", "VFR timestamp preservation",
+      "H.265/H.264/AV1 output",
+    ]};
+  });
 }
 
-/**
- * Savings math:
- *   ratio = 1 - (bytes_out / bytes_in)
- *   percent = ratio * 100
- * bytes_in  = remuxed camera bitstream for the same wall-clock window (-c copy)
- * bytes_out = Zipstream-encoded MP4
- */
 export function compressionRatio(bytesIn: number, bytesOut: number): number {
   if (bytesIn <= 0) return 0;
   return Math.max(0, Math.min(0.999, 1 - bytesOut / bytesIn));
 }
+
+export function savedBytes(bytesIn: number, bytesOut: number): number { return Math.max(0, bytesIn - bytesOut); }
