@@ -228,6 +228,8 @@ export function CamerasPage() {
 
   return (
     <>
+      <h1>Cameras</h1>
+      <p className="sub">Manage recording sources · {limits.used}/{limits.max} available</p>
       <h1>IP Cameras & Multi-Stream Compression</h1>
       <p className="sub">
         Capture and compress Stream 1 (Main/4K), Stream 2 (Sub/720p), or Stream 3 (Mobile/CIF) with guaranteed 80%+ storage reduction · {limits.used}/{limits.max}
@@ -325,6 +327,9 @@ export function CamerasPage() {
                   value={form.compressionProfile}
                   onChange={(e) => onProfileChange(e.target.value)}
                 >
+                  <option value="zipstream">Efficient</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="forensic">Forensic (more detail)</option>
                   <option value="extreme_80plus">Extreme 80%+ (Guaranteed ≥80% surveillance reduction)</option>
                   <option value="zipstream">Zipstream (Adaptive static ≥80%)</option>
                   <option value="balanced">Balanced (60-85% reduction)</option>
@@ -388,6 +393,19 @@ export function CamerasPage() {
                   {hwEncoders.includes("h264_vaapi") && <option value="h264_vaapi">H.264 (VAAPI)</option>}
                 </select>
               </label>
+              <label>
+                Static-frame reduction
+                <select
+                  value={form.mpdecimate ? "1" : "0"}
+                  onChange={(e) => setForm({ ...form, mpdecimate: e.target.value === "1" })}
+                >
+                  <option value="1">On</option>
+                  <option value="0">Off</option>
+                </select>
+              </label>
+              <button type="submit">Add</button>
+            </div>
+          </form>
               <div style={{ display: "flex", alignItems: "flex-end" }}>
                 <button type="submit">Add Camera</button>
               </div>
@@ -495,6 +513,7 @@ export function CamerasPage() {
                   <span className="badge ok">{c.activeStream || c.streamType || "stream1"}</span>
                 </td>
                 <td className="mono">
+                  {c.compressionProfile || "efficient"} · H.265
                   {c.compressionProfile || "extreme_80plus"} · GoV {c.gopSize ?? 360} · B{c.bframes ?? 10} · CRF {c.crf}
                   <div className="sub" style={{ color: "#10b981" }}>Target: ≥{c.targetCompressionPct || 80}% reduction</div>
                 </td>
@@ -549,6 +568,7 @@ export function CamerasPage() {
             {!cameras.length ? (
               <tr>
                 <td colSpan={5} className="sub">
+                  No cameras have been added yet.
                   No cameras yet — any RTSP camera works (Axis, Hikvision, Dahua, Hanwha, Uniview, etc.).
                 </td>
               </tr>

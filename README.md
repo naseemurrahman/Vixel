@@ -1,6 +1,6 @@
 # Vixel
 
-Vixel is an open, vendor-neutral IP-camera recording compressor for Linux servers. It ingests RTSP streams from cameras of different brands and produces standards-based recordings with content-aware temporal and spatial compression.
+Vixel is an open, vendor-neutral IP-camera recording compressor for Windows, macOS, and Linux. It ingests RTSP streams from cameras of different brands and produces standards-based recordings with live compression and host-resource reporting.
 
 The design target is **80%+ storage reduction on suitable static/low-motion scenes**, while measuring the actual result for every recording. It does not depend on Axis Zipstream or a proprietary camera API.
 
@@ -58,7 +58,7 @@ The `zipstream` name means **Zipstream-inspired**, not Axis Zipstream. Vixel is 
 - **Server:** Node.js 20, TypeScript, Fastify, SQLite
 - **Media:** FFmpeg + FFprobe
 - **UI:** React + Vite
-- **Deployment:** Linux/Docker
+- **Deployment:** Windows, macOS, Linux, or Docker
 - **Storage:** local/NAS, S3/MinIO, SFTP
 - **Input:** RTSP / RTSPS
 - **Output:** MP4, H.265/H.264/AV1 (software), plus hardware-accelerated H.265/H.264 via Intel Quick Sync, NVIDIA NVENC, or VAAPI where the host provides it (see `GET /api/system/encoders`)
@@ -67,12 +67,11 @@ See [the production architecture](PRODUCTION_ARCHITECTURE.md) for the edge
 pipeline, mathematically defined compression constraints, storage/NVR delivery
 semantics, and the safe role of optional AI inference.
 
-## Linux deployment
+## Deployment
 
 Requirements:
 
-- Linux host
-- Docker Engine + Docker Compose
+- Windows, macOS, or Linux host with Node.js 20+ and FFmpeg available on `PATH`; or Docker Engine + Docker Compose
 - Network access from the Vixel host/container to the camera VLAN
 - FFmpeg/FFprobe are included in the production container
 
@@ -91,23 +90,7 @@ Open:
 http://SERVER_IP:8080
 ```
 
-The initial administrator is created only on the first start, so changing
-`VIXEL_ADMIN_PASSWORD` later does not overwrite an existing account. If that
-password is lost, reset it deliberately from the server host (this requires
-access to the Docker host):
-
-```bash
-docker compose exec -T \
-  -e VIXEL_RESET_ADMIN_PASSWORD='a-new-unique-password-at-least-16-characters' \
-  vixel npm run admin:reset
-```
-
-Use a password manager to generate a unique value, then remove the temporary
-environment variable from your shell history. This command only changes an
-existing active administrator; it never creates an account or exposes a
-password over the network.
-
-For RTSP camera access on a Linux host, host networking is often the simplest option when Vixel must reach cameras across multiple VLANs/interfaces. If using bridge networking, publish the required ports and ensure the container has routes to the camera networks.
+For RTSP camera access, make sure the Vixel host or container can route to the camera VLAN. On Linux, host networking is often the simplest option across multiple VLANs/interfaces. On Windows and macOS, use the host network route or a Docker configuration that can reach the camera network.
 
 ## Vercel dashboard deployment
 

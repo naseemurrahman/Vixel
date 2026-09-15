@@ -1,33 +1,33 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 
 type Dash = {
   cameras: { total: number; enabled: number };
   recordings: { recent: number; uploaded: number; failed: number };
   compression: { averagePercent: number };
-  license: {
-    customer: string;
-    maxCameras: number;
-    maxStorageTargets: number;
-    maxConcurrentJobs: number;
-    features: string[];
-    licenseId: string;
-  };
   activeJobs: { cameraId: string; recordingId: string }[];
   openAlerts: number;
-  users: number;
   latestMetrics: {
+    ts: string;
     cpuPct: number;
     memUsedMb: number;
     activeJobs: number;
     diskRecordingsMb: number;
+    compressionPct: number;
+    bytesOutRate: number;
   } | null;
 };
+
+function formatRate(mbPerSecond: number) {
+  return mbPerSecond >= 1 ? `${mbPerSecond.toFixed(1)} MB/s` : `${(mbPerSecond * 1024).toFixed(0)} KB/s`;
+}
 
 export function DashboardPage() {
   const [data, setData] = useState<Dash | null>(null);
   const [error, setError] = useState("");
+  const [liveMetric, setLiveMetric] = useState<Dash["latestMetrics"]>(null);
+  const [streamState, setStreamState] = useState<"connecting" | "live" | "offline">("connecting");
+  const retryRef = useRef<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -36,17 +36,62 @@ export function DashboardPage() {
         .then((d) => alive && setData(d))
         .catch((e) => alive && setError(e.message));
     load();
-    const t = setInterval(load, 5000);
+    const t = setInterval(load, 15000);
     return () => {
       alive = false;
       clearInterval(t);
     };
   }, []);
 
+  useEffect(() => {
+    const token = localStorage.getItem("vixel_token");
+    if (!token) return;
+    const controller = new AbortController();
+    const connect = async () => {
+      try {
+        setStreamState("connecting");
+        const response = await fetch("/api/metrics/stream", {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error("Live metrics unavailable");
+        setStreamState("live");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!controller.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) throw new Error("Live metrics stream ended");
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split("\n\n");
+          buffer = events.pop() ?? "";
+          for (const event of events) {
+            const line = event.split("\n").find((item) => item.startsWith("data: "));
+            if (line) setLiveMetric(JSON.parse(line.slice(6)) as Dash["latestMetrics"]);
+          }
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        setStreamState("offline");
+        retryRef.current = window.setTimeout(connect, 5000);
+      }
+    };
+    connect();
+    return () => {
+      controller.abort();
+      if (retryRef.current) window.clearTimeout(retryRef.current);
+    };
+  }, []);
+
+  const metrics = liveMetric ?? data?.latestMetrics;
+
   return (
     <>
       <h1>Dashboard</h1>
-      <p className="sub">Live overview — compression, jobs, alerts, and license.</p>
+      <div className="page-heading">
+        <p className="sub">Live status for recording, compression, and host resources.</p>
+        <span className={`live-state ${streamState}`}>{streamState === "live" ? "Live" : streamState === "connecting" ? "Connecting" : "Reconnecting"}</span>
+      </div>
       {error ? <p className="error">{error}</p> : null}
       {data ? (
         <>
@@ -58,74 +103,38 @@ export function DashboardPage() {
               </div>
             </div>
             <div className="stat">
-              <div className="label">Avg compression</div>
-              <div className="value">{data.compression.averagePercent}%</div>
+              <div className="label">Compression</div>
+              <div className="value">{metrics?.compressionPct ?? data.compression.averagePercent}%</div>
             </div>
             <div className="stat">
               <div className="label">Active jobs</div>
               <div className="value">{data.activeJobs.length}</div>
             </div>
             <div className="stat">
-              <div className="label">Open alerts</div>
-              <div className="value">{data.openAlerts}</div>
+              <div className="label">Host CPU</div>
+              <div className="value">{metrics?.cpuPct ?? 0}%</div>
             </div>
             <div className="stat">
-              <div className="label">CPU</div>
-              <div className="value">{data.latestMetrics?.cpuPct ?? 0}%</div>
-            </div>
-            <div className="stat">
-              <div className="label">Heap</div>
-              <div className="value">{data.latestMetrics?.memUsedMb ?? 0} MB</div>
+              <div className="label">Memory</div>
+              <div className="value">{metrics?.memUsedMb ?? 0} MB</div>
             </div>
           </div>
 
-          <div className="panel">
-            <h2>Quick actions</h2>
-            <div className="row">
-              <Link className="btn-link" to="/performance">
-                Live performance
-              </Link>
-              <Link className="btn-link" to="/usage">
-                Usage graphs
-              </Link>
-              <Link className="btn-link" to="/cameras">
-                Cameras
-              </Link>
-              <Link className="btn-link" to="/alerts">
-                Alerts
-              </Link>
-              <Link className="btn-link" to="/logs">
-                Logs
-              </Link>
+          <div className="panel live-summary">
+            <div>
+              <span className="label">Current output rate</span>
+              <strong>{formatRate(metrics?.bytesOutRate ?? 0)}</strong>
+            </div>
+            <div>
+              <span className="label">Compression status</span>
+              <strong>{(metrics?.activeJobs ?? data.activeJobs.length) > 0 ? `${metrics?.activeJobs ?? data.activeJobs.length} encoder active` : "Standing by"}</strong>
+            </div>
+            <div>
+              <span className="label">Recording storage</span>
+              <strong>{metrics?.diskRecordingsMb ?? 0} MB</strong>
             </div>
           </div>
 
-          <div className="panel">
-            <h2>License entitlements</h2>
-            <p className="sub" style={{ marginBottom: "0.75rem" }}>
-              {data.license.customer} · {data.license.licenseId} · {data.users} user(s)
-            </p>
-            <table>
-              <tbody>
-                <tr>
-                  <td>Max cameras</td>
-                  <td className="mono">{data.license.maxCameras}</td>
-                </tr>
-                <tr>
-                  <td>Max storage targets</td>
-                  <td className="mono">{data.license.maxStorageTargets}</td>
-                </tr>
-                <tr>
-                  <td>Max concurrent jobs</td>
-                  <td className="mono">{data.license.maxConcurrentJobs}</td>
-                </tr>
-                <tr>
-                  <td>Features</td>
-                  <td className="mono">{data.license.features.join(", ") || "—"}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
         </>
       ) : (
         <p className="sub">Loading…</p>

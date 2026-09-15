@@ -3,23 +3,30 @@ import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import type { Camera } from "./cameras.js";
-import { getCamera, listCameras, resolveCameraStreamUrl } from "./cameras.js";
+import { getCamera, listCameras } from "./cameras.js";
 import {
   buildEncodeArgs,
-  buildHwAccelArgs,
   buildStrategy,
   compressionRatio,
-  HARDWARE_CODECS,
   type CompressionProfile,
-  type StreamType,
 } from "./compression-strategy.js";
 import { config } from "./config.js";
 import { db, nowIso } from "./db.js";
 import { effectiveEntitlements } from "./license.js";
 import { systemLog } from "./logs.js";
-import { listStorageTargets, recordUpload, uploadRecordingWithRetry } from "./storage.js";
+import {
+  listStorageTargets,
+  recordUpload,
+  uploadRecordingFile,
+} from "./storage.js";
 
-type ActiveJob = { cameraId: string; recordingId: string; proc: ReturnType<typeof spawn> };
+type ActiveJob = {
+  cameraId: string;
+  recordingId: string;
+  outputPath: string;
+  procs: Set<ReturnType<typeof spawn>>;
+};
+
 const active = new Map<string, ActiveJob>();
 
 function fileSize(p: string): number {
@@ -30,7 +37,10 @@ function fileSize(p: string): number {
   }
 }
 
-function runFfmpeg(args: string[], onProc?: (proc: ReturnType<typeof spawn>) => void): Promise<void> {
+function runFfmpeg(
+  args: string[],
+  onProc?: (proc: ReturnType<typeof spawn>) => void
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(config.ffmpegPath, args, { windowsHide: true });
     onProc?.(proc);
@@ -63,9 +73,8 @@ function probeDuration(file: string): Promise<number> {
     });
     proc.on("error", reject);
     proc.on("close", (code) => {
-      const value = Number.parseFloat(stdout.trim());
-      if (code === 0 && Number.isFinite(value)) resolve(value);
-      else reject(new Error(`ffprobe duration failed: ${stderr || "unknown error"}`));
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited ${code}: ${stderr || "no output"}`));
     });
   });
 }
@@ -87,6 +96,12 @@ function strategyFromCamera(camera: Camera, streamType: StreamType = "stream1") 
 }
 
 /**
+ * Two-stage Zipstream-inspired pipeline (brand-agnostic RTSP):
+ * 1) Remux camera bitstream with -c copy → authentic bytes_in baseline
+ * 2) Re-encode with GoV / P/B / mpdecimate / AQ → bytes_out
+ * Savings % = (1 - bytes_out/bytes_in) * 100
+ */
+export async function compressSegment(camera: Camera): Promise<{
  * Capture a camera segment from any specified stream (Stream 1, 2, or 3),
  * then transcode it using Vixel adaptive compression to achieve >=80% reduction.
  *
@@ -121,6 +136,71 @@ export async function compressSegment(
   const camDir = path.join(config.recordingsDir, camera.id);
   fs.mkdirSync(camDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const rawPath = path.join(camDir, `${stamp}.source.ts`);
+  const outPath = path.join(camDir, `${stamp}.zipstream.mp4`);
+  const input = strategyFromCamera(camera);
+  const plan = buildStrategy(input);
+
+  db.prepare(
+    `INSERT INTO recordings (id, camera_id, status, source_path, output_path, started_at)
+     VALUES (?, ?, 'capturing', ?, ?, ?)`
+  ).run(recordingId, camera.id, rawPath, outPath, nowIso());
+
+  const job: ActiveJob = { cameraId: camera.id, recordingId, outputPath: outPath, procs: new Set() };
+  const track = (proc: ReturnType<typeof spawn>) => {
+    job.procs.add(proc);
+    active.set(camera.id, job);
+  };
+
+  try {
+    // Record the source baseline and encode at the same time. This keeps the
+    // compressor live for the full recording interval instead of waiting for a
+    // completed source segment before beginning the encode.
+    await Promise.all([
+      runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+        camera.rtsp_url,
+        "-t",
+        String(camera.segment_seconds),
+        "-c",
+        "copy",
+        "-f",
+        "mpegts",
+        "-y",
+        rawPath,
+      ],
+      track
+      ),
+      runFfmpeg(
+        [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-rtsp_transport",
+          "tcp",
+          "-i",
+          camera.rtsp_url,
+          "-t",
+          String(camera.segment_seconds),
+          ...buildEncodeArgs(input),
+          "-y",
+          outPath,
+        ],
+        track
+      ),
+    ]);
+
+    const bytesIn = fileSize(rawPath);
+    if (bytesIn < 1024) {
+      throw new Error("Source capture too small — check RTSP URL / camera reachability");
+    }
+
   const rawPath = path.join(camDir, `${stamp}.${streamLabel}.source.mkv`);
   const outPath = path.join(camDir, `${stamp}.${streamLabel}.vixel.mp4`);
   const input = strategyFromCamera(camera, streamLabel);
@@ -172,10 +252,20 @@ export async function compressSegment(
     );
 
     active.delete(camera.id);
-    if (!fs.existsSync(outPath)) throw new Error("Encode produced no output file");
+
+    if (!fs.existsSync(outPath)) {
+      throw new Error("Encode produced no output file");
+    }
 
     const bytesOut = fileSize(outPath);
     const ratio = compressionRatio(bytesIn, bytesOut);
+
+    db.prepare(
+      `UPDATE recordings SET status='compressed', bytes_in=?, bytes_out=?, compression_ratio=?, finished_at=? WHERE id=?`
+    ).run(bytesIn, bytesOut, ratio, nowIso(), recordingId);
+
+    systemLog("info", "compress", `Zipstream segment ${camera.name}`, {
+      profile: input.profile,
     const outputDuration = await probeDuration(outPath);
     const durationDelta = outputDuration - inputDuration;
 
@@ -201,6 +291,9 @@ export async function compressSegment(
       gop: input.gopSize,
       bframes: input.bframes,
       mpdecimate: input.mpdecimate,
+    });
+
+    // Keep source only if forensic profile (debug); else free disk
       staticFrameStride: plan.staticFrameStride,
       motionThreshold: plan.motionThreshold,
       inputDuration,
@@ -234,8 +327,15 @@ export async function compressSegment(
       qualitySsim,
     };
   } catch (e) {
+    for (const proc of job.procs) {
+      if (!proc.killed) proc.kill("SIGTERM");
+    }
     active.delete(camera.id);
     const msg = e instanceof Error ? e.message : String(e);
+    db.prepare(
+      `UPDATE recordings SET status='failed', error=?, finished_at=? WHERE id=?`
+    ).run(msg, nowIso(), recordingId);
+    systemLog("error", "compress", msg, { cameraId: camera.id });
     db.prepare(`UPDATE recordings SET status="failed", error=?, finished_at=? WHERE id=?`).run(
       msg,
       nowIso(),
@@ -267,6 +367,7 @@ async function uploadToAllTargets(
     try {
       const remote = await uploadRecordingWithRetry(target, localFile, remoteName);
       recordUpload(recordingId, target.id, "uploaded", remote);
+      db.prepare(`UPDATE recordings SET status='uploaded' WHERE id=?`).run(recordingId);
     } catch (e) {
       failures += 1;
       const msg = e instanceof Error ? e.message : String(e);
@@ -311,12 +412,20 @@ export function detectHardwareEncoders(maxAgeMs = 60_000): Promise<string[]> {
 export function stopCameraJob(cameraId: string): boolean {
   const job = active.get(cameraId);
   if (!job) return false;
-  job.proc.kill("SIGTERM");
+  for (const proc of job.procs) proc.kill("SIGTERM");
   active.delete(cameraId);
   return true;
 }
 
 export function getActiveJobs() {
+  return [...active.values()].map((j) => ({
+    cameraId: j.cameraId,
+    recordingId: j.recordingId,
+  }));
+}
+
+export function getActiveOutputBytes(): number {
+  return [...active.values()].reduce((total, job) => total + fileSize(job.outputPath), 0);
   return [...active.values()].map((j) => ({ cameraId: j.cameraId, recordingId: j.recordingId }));
 }
 
@@ -326,6 +435,7 @@ export function startCameraLoop(cameraId: string): void {
   if (loops.has(cameraId)) return;
   const state = { stop: false };
   loops.set(cameraId, state);
+
   (async () => {
     while (!state.stop) {
       const cam = getCamera(cameraId);
@@ -351,7 +461,9 @@ export function stopCameraLoop(cameraId: string): void {
 export function syncCameraLoops(): void {
   const enabled = new Set(listCameras().filter((c) => c.enabled).map((c) => c.id));
   for (const id of enabled) startCameraLoop(id);
-  for (const id of [...loops.keys()]) if (!enabled.has(id)) stopCameraLoop(id);
+  for (const id of [...loops.keys()]) {
+    if (!enabled.has(id)) stopCameraLoop(id);
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -361,6 +473,9 @@ function sleep(ms: number): Promise<void> {
 export function listRecordings(limit = 50) {
   return db
     .prepare(
+      `SELECT r.*, c.name AS camera_name FROM recordings r
+       LEFT JOIN cameras c ON c.id = r.camera_id
+       ORDER BY r.started_at DESC LIMIT ?`
       `SELECT r.*, c.name AS camera_name FROM recordings r LEFT JOIN cameras c ON c.id = r.camera_id ORDER BY r.started_at DESC LIMIT ?`
     )
     .all(limit);

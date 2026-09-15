@@ -10,7 +10,7 @@ const root = path.resolve(__dirname, "../..");
 
 function env(name: string, fallback?: string): string {
   const v = process.env[name] ?? fallback;
-  if (v === undefined || v.trim() === "") throw new Error(`Missing env ${name}`);
+  if (v === undefined) throw new Error(`Missing env ${name}`);
   return v;
 }
 
@@ -31,10 +31,11 @@ export const config = {
   port: Number(env("VIXEL_PORT", "8080")),
   dataDir: path.resolve(root, env("VIXEL_DATA_DIR", "./data")),
   recordingsDir: path.resolve(root, env("VIXEL_RECORDINGS_DIR", "./recordings")),
+  jwtSecret: env("VIXEL_JWT_SECRET", "dev-only-change-me"),
   archiveDir: path.resolve(root, env("VIXEL_ARCHIVE_DIR", "./recordings/archive")),
   jwtSecret: requiredRuntimeValue("VIXEL_JWT_SECRET"),
   adminUser: env("VIXEL_ADMIN_USER", "admin"),
-  adminPassword: requiredRuntimeValue("VIXEL_ADMIN_PASSWORD"),
+  adminPassword: env("VIXEL_ADMIN_PASSWORD", "changeme"),
   corsOrigin: env("VIXEL_CORS_ORIGIN", "http://localhost:5173"),
   licensePublicKeyPem: process.env.VIXEL_LICENSE_PUBLIC_KEY?.replace(/\\n/g, "\n") ?? "",
   webDist: path.resolve(root, "web/dist"),

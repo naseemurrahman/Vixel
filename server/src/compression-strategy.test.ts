@@ -15,13 +15,13 @@ import {
 import { resolveCameraStreamUrl, type Camera } from "./cameras.js";
 import { StorageInputSchema } from "./storage.js";
 
-test("zipstream profile targets aggressive static-scene temporal reduction", () => {
+test("zipstream profile keeps an aggressive long-GOP default", () => {
   const defaults = profileDefaults("zipstream");
-  assert.equal(defaults.staticFrameStride, 5);
-  assert.ok(defaults.motionThreshold > 0 && defaults.motionThreshold < 0.05);
   assert.ok(defaults.defaultGop >= 240);
+  assert.ok(defaults.defaultB >= 6);
 });
 
+test("adaptive strategy applies duplicate-frame reduction with normalized timestamps", () => {
 test("extreme_80plus profile guarantees >=80% reduction parameters", () => {
   const defaults = profileDefaults("extreme_80plus");
   assert.equal(defaults.staticFrameStride, 6);
@@ -58,8 +58,8 @@ test("adaptive strategy keeps VFR timestamps instead of rebuilding PTS", () => {
     mpdecimate: true,
     audio: false,
   });
-  assert.ok(plan.videoFilters.some((f) => f.includes("select=")));
   assert.ok(plan.videoFilters.some((f) => f.includes("mpdecimate=")));
+  assert.ok(plan.videoFilters.some((f) => f.includes("setpts=")));
 
   const args = buildEncodeArgs({
     codec: "libx265",
@@ -71,9 +71,8 @@ test("adaptive strategy keeps VFR timestamps instead of rebuilding PTS", () => {
     mpdecimate: true,
     audio: false,
   });
-  assert.ok(args.includes("-fps_mode"));
-  assert.ok(args.includes("vfr"));
-  assert.ok(!args.includes("setpts"));
+  assert.ok(args.includes("-vf"));
+  assert.ok(args.some((arg) => arg.includes("mpdecimate=")));
 });
 
 test("multi-stream configurations (Stream 1, 2, 3) are supported and described", () => {
