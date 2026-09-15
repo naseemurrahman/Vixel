@@ -233,11 +233,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
           compressionPercent: Math.round(result.ratio * 1000) / 10,
           profile: result.profile,
           strategy: result.strategy,
-          inputDuration: result.inputDuration,
-          outputDuration: result.outputDuration,
-          durationDelta: result.durationDelta,
-          formula: "savings = 1 - (bytes_out / bytes_in); temporal reduction preserves source PTS (VFR)",
-          target: "80%+ savings on suitable static/low-motion sources; actual savings are measured",
+          formula: "savings = 1 - (bytes_out / bytes_in); bytes_in = camera bitstream (-c copy)",
         };
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Capture failed";
@@ -414,9 +410,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       savingsRatio: "1 - (bytes_out / bytes_in)",
       bytesIn: "Remuxed camera RTSP segment (-c copy) — vendor-agnostic baseline",
       bytesOut: "Re-encoded MP4 after GoV + P/B + mpdecimate + AQ",
-      staticTarget: "80%+ target on suitable static/low-motion sources with profile=zipstream; actual savings are measured",
-      temporalModel: "scene-aware sampling + near-duplicate removal; original timestamps preserved",
-      note: "No codec can guarantee 80% savings against an already highly compressed source without changing quality or temporal resolution.",
+      staticTarget: "≥80% on static / low-motion scenes with profile=zipstream",
     },
   }));
 }

@@ -19,16 +19,6 @@ type Camera = {
   mpdecimate: boolean;
   strategyHint?: string;
 };
-type Strategy = {
-  id: string;
-  description: string;
-  expectedStaticSavings: string;
-  defaultGop: number;
-  defaultB: number;
-  defaultCrf: number;
-  staticFrameStride: number;
-  motionThreshold: number;
-};
 
 export function CamerasPage() {
   const { user } = useAuth();
@@ -36,8 +26,6 @@ export function CamerasPage() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [limits, setLimits] = useState({ used: 0, max: 1 });
   const [error, setError] = useState("");
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [captureResult, setCaptureResult] = useState<{ profile: string; savings: number; bytesIn: number; bytesOut: number; durationDelta: number } | null>(null);
   const [form, setForm] = useState({
     name: "",
     rtspUrl: "rtsp://",
@@ -62,9 +50,6 @@ export function CamerasPage() {
 
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
-    api<{ strategies: Strategy[] }>("/api/compression/strategies")
-      .then((r) => setStrategies(r.strategies))
-      .catch(() => setStrategies([]));
   }, []);
 
   function onProfileChange(profile: string) {
@@ -150,10 +135,7 @@ export function CamerasPage() {
   return (
     <>
       <h1>Cameras</h1>
-      <p className="sub">
-        Any RTSP brand · Zipstream-class GoV / I-P-B compression · licensed {limits.used}/
-        {limits.max}
-      </p>
+      <p className="sub">Manage recording sources · {limits.used}/{limits.max} available</p>
       {error ? <p className="error">{error}</p> : null}
 
       {canEdit ? (
@@ -186,7 +168,7 @@ export function CamerasPage() {
                   value={form.compressionProfile}
                   onChange={(e) => onProfileChange(e.target.value)}
                 >
-                  <option value="zipstream">Zipstream (static ≥80%)</option>
+                  <option value="zipstream">Efficient</option>
                   <option value="balanced">Balanced</option>
                   <option value="forensic">Forensic (more detail)</option>
                 </select>
@@ -243,58 +225,18 @@ export function CamerasPage() {
                 </select>
               </label>
               <label>
-                Static decimate
+                Static-frame reduction
                 <select
                   value={form.mpdecimate ? "1" : "0"}
                   onChange={(e) => setForm({ ...form, mpdecimate: e.target.value === "1" })}
                 >
-                  <option value="1">On (Zipstream temporal)</option>
+                  <option value="1">On</option>
                   <option value="0">Off</option>
                 </select>
               </label>
               <button type="submit">Add</button>
             </div>
           </form>
-          <p className="sub" style={{ marginTop: "0.75rem", marginBottom: 0 }}>
-            Open model: long GoV (few I-frames when still), adaptive P/B predictors, mpdecimate for
-            static frames, AQ for spatial bits. Measured as{" "}
-            <span className="mono">1 − out/in</span> against the camera&apos;s own bitstream.
-          </p>
-        </div>
-      ) : null}
-
-      {captureResult ? (
-        <div className="panel">
-          <h2>Last compression result</h2>
-          <div className="grid">
-            <div className="stat"><div className="label">Measured savings</div><div className="value">{captureResult.savings}%</div></div>
-            <div className="stat"><div className="label">Input</div><div className="value">{(captureResult.bytesIn / 1e6).toFixed(1)} MB</div></div>
-            <div className="stat"><div className="label">Output</div><div className="value">{(captureResult.bytesOut / 1e6).toFixed(1)} MB</div></div>
-            <div className="stat"><div className="label">Duration delta</div><div className="value">{captureResult.durationDelta.toFixed(2)} s</div></div>
-          </div>
-          <p className="sub">Measured using 1 − (output bytes / input bytes). Original timestamps are retained; duration is checked after encoding.</p>
-        </div>
-      ) : null}
-
-      {strategies.length ? (
-        <div className="panel">
-          <h2>Adaptive compression engine</h2>
-          <p className="sub">Vendor-neutral strategy. Static scenes are sampled more aggressively; motion retains temporal detail.</p>
-          <table>
-            <thead><tr><th>Profile</th><th>Target</th><th>GoV</th><th>B</th><th>Static stride</th><th>Scene threshold</th></tr></thead>
-            <tbody>
-              {strategies.map((s) => (
-                <tr key={s.id}>
-                  <td><strong>{s.id}</strong><div className="sub">{s.description}</div></td>
-                  <td>{s.expectedStaticSavings}</td>
-                  <td className="mono">{s.defaultGop}</td>
-                  <td className="mono">{s.defaultB}</td>
-                  <td className="mono">1/{s.staticFrameStride}</td>
-                  <td className="mono">{s.motionThreshold}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       ) : null}
 
@@ -316,9 +258,7 @@ export function CamerasPage() {
                 <td>{c.name}</td>
                 <td className="mono">{c.rtspUrl}</td>
                 <td className="mono">
-                  {c.compressionProfile || "zipstream"} · GoV {c.gopSize ?? "—"} · B
-                  {c.bframes ?? "—"} · CRF {c.crf}
-                  {c.strategyHint ? <div className="sub">{c.strategyHint}</div> : null}
+                  {c.compressionProfile || "efficient"} · H.265
                 </td>
                 <td>
                   <span className={`badge ${c.enabled ? "ok" : ""}`}>
@@ -347,7 +287,7 @@ export function CamerasPage() {
             {!cameras.length ? (
               <tr>
                 <td colSpan={5} className="sub">
-                  No cameras yet — any RTSP camera works (Axis, Hikvision, Dahua, …).
+                  No cameras have been added yet.
                 </td>
               </tr>
             ) : null}

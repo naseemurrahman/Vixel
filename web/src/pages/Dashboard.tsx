@@ -1,22 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "../api";
 
 type Dash = {
   cameras: { total: number; enabled: number };
   recordings: { recent: number; uploaded: number; failed: number };
   compression: { averagePercent: number };
-  license: {
-    customer: string;
-    maxCameras: number;
-    maxStorageTargets: number;
-    maxConcurrentJobs: number;
-    features: string[];
-    licenseId: string;
-  };
   activeJobs: { cameraId: string; recordingId: string }[];
   openAlerts: number;
-  users: number;
   latestMetrics: {
     cpuPct: number;
     memUsedMb: number;
@@ -46,7 +36,7 @@ export function DashboardPage() {
   return (
     <>
       <h1>Dashboard</h1>
-      <p className="sub">Live overview — compression, jobs, alerts, and license.</p>
+      <p className="sub">A concise live view of your recording system.</p>
       {error ? <p className="error">{error}</p> : null}
       {data ? (
         <>
@@ -66,10 +56,6 @@ export function DashboardPage() {
               <div className="value">{data.activeJobs.length}</div>
             </div>
             <div className="stat">
-              <div className="label">Open alerts</div>
-              <div className="value">{data.openAlerts}</div>
-            </div>
-            <div className="stat">
               <div className="label">CPU</div>
               <div className="value">{data.latestMetrics?.cpuPct ?? 0}%</div>
             </div>
@@ -79,53 +65,6 @@ export function DashboardPage() {
             </div>
           </div>
 
-          <div className="panel">
-            <h2>Quick actions</h2>
-            <div className="row">
-              <Link className="btn-link" to="/performance">
-                Live performance
-              </Link>
-              <Link className="btn-link" to="/usage">
-                Usage graphs
-              </Link>
-              <Link className="btn-link" to="/cameras">
-                Cameras
-              </Link>
-              <Link className="btn-link" to="/alerts">
-                Alerts
-              </Link>
-              <Link className="btn-link" to="/logs">
-                Logs
-              </Link>
-            </div>
-          </div>
-
-          <div className="panel">
-            <h2>License entitlements</h2>
-            <p className="sub" style={{ marginBottom: "0.75rem" }}>
-              {data.license.customer} · {data.license.licenseId} · {data.users} user(s)
-            </p>
-            <table>
-              <tbody>
-                <tr>
-                  <td>Max cameras</td>
-                  <td className="mono">{data.license.maxCameras}</td>
-                </tr>
-                <tr>
-                  <td>Max storage targets</td>
-                  <td className="mono">{data.license.maxStorageTargets}</td>
-                </tr>
-                <tr>
-                  <td>Max concurrent jobs</td>
-                  <td className="mono">{data.license.maxConcurrentJobs}</td>
-                </tr>
-                <tr>
-                  <td>Features</td>
-                  <td className="mono">{data.license.features.join(", ") || "—"}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
         </>
       ) : (
         <p className="sub">Loading…</p>

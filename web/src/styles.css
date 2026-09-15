@@ -1,16 +1,16 @@
 :root {
-  --bg0: #0c1210;
-  --bg1: #121a17;
-  --bg2: #1a2621;
-  --line: #2a3b34;
-  --text: #e8f0eb;
-  --muted: #8aa396;
-  --accent: #3ecf8e;
-  --accent-dim: #1f7a52;
-  --warn: #e8b84a;
-  --danger: #e86a5a;
-  --radius: 10px;
-  --font: "DM Sans", system-ui, sans-serif;
+  --bg0: #263b3e;
+  --bg1: #2d4649;
+  --bg2: #354f52;
+  --line: #557174;
+  --text: #f3f6f4;
+  --muted: #c2d0cf;
+  --accent: #b8d8c6;
+  --accent-dim: #6b9485;
+  --warn: #eed28c;
+  --danger: #f0a097;
+  --radius: 8px;
+  --font: "DejaVu Sans ExtraLight", "DejaVu Sans", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
@@ -29,9 +29,9 @@ body {
   font-family: var(--font);
   color: var(--text);
   background:
-    radial-gradient(1200px 600px at 10% -10%, #1a3d30 0%, transparent 55%),
-    radial-gradient(900px 500px at 100% 0%, #243028 0%, transparent 50%),
-    linear-gradient(180deg, var(--bg0), #0a0f0d 70%);
+    radial-gradient(1200px 600px at 10% -10%, #45676a 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #405d60 0%, transparent 50%),
+    linear-gradient(180deg, var(--bg0), #1f3033 70%);
   background-attachment: fixed;
 }
 
@@ -55,7 +55,7 @@ textarea {
 
 .nav {
   border-right: 1px solid var(--line);
-  background: rgba(12, 18, 16, 0.85);
+  background: rgba(38, 59, 62, 0.92);
   backdrop-filter: blur(10px);
   padding: 1.25rem 1rem;
   display: flex;
@@ -64,6 +64,7 @@ textarea {
 }
 
 .brand {
+  font-family: "DejaVu Sans", sans-serif;
   font-weight: 700;
   font-size: 1.45rem;
   letter-spacing: -0.03em;
@@ -176,7 +177,7 @@ h1 {
 }
 
 .stat {
-  background: linear-gradient(160deg, var(--bg2), var(--bg1));
+  background: linear-gradient(160deg, #3b585b, var(--bg1));
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 1rem 1.1rem;
@@ -195,7 +196,7 @@ h1 {
 }
 
 .panel {
-  background: rgba(18, 26, 23, 0.9);
+  background: rgba(45, 70, 73, 0.92);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 1.1rem 1.2rem;
@@ -242,7 +243,7 @@ textarea {
 
 button {
   background: var(--accent);
-  color: #062216;
+  color: #1e3032;
   border: none;
   border-radius: 8px;
   padding: 0.55rem 0.95rem;
@@ -313,7 +314,7 @@ th {
 
 .login-card {
   width: min(400px, 100%);
-  background: rgba(18, 26, 23, 0.95);
+  background: rgba(45, 70, 73, 0.96);
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 1.75rem;
