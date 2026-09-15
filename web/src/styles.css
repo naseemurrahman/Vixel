@@ -354,20 +354,117 @@ th {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 1rem;
+  padding: 1.5rem;
+  background:
+    radial-gradient(600px 360px at 50% 0%, rgba(62, 207, 142, 0.16), transparent 68%),
+    linear-gradient(180deg, #0f1915, #080d0b);
 }
 
 .login-card {
   width: min(400px, 100%);
   background: rgba(45, 70, 73, 0.96);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 1.75rem;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  width: min(430px, 100%);
+  background: rgba(18, 26, 23, 0.97);
+  border: 1px solid rgba(112, 157, 132, 0.28);
+  border-radius: 18px;
+  padding: 2rem;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
 }
 
-.login-card h1 {
-  font-size: 2rem;
+.login-mark {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-bottom: 1.25rem;
+  border-radius: 9px;
+  color: #062116;
+  background: var(--accent);
+  font-weight: 800;
+}
+
+.login-eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.login-title {
+  margin: 0.35rem 0 0;
+  font-size: 2.2rem;
+  letter-spacing: -0.04em;
+}
+
+.login-copy {
+  margin: 0.55rem 0 1.6rem;
+  line-height: 1.5;
+}
+
+.login-fields {
+  display: grid;
+  gap: 1rem;
+}
+
+.login-fields label {
+  display: grid;
+  gap: 0.45rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.login-fields input {
+  width: 100%;
+  min-height: 2.7rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d1511;
+  color: var(--text);
+}
+
+.login-fields input:focus {
+  outline: 2px solid rgba(62, 207, 142, 0.5);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  padding-right: 4.5rem;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.4rem;
+  transform: translateY(-50%);
+  min-height: auto;
+  padding: 0.25rem 0.4rem;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.login-submit {
+  min-height: 2.8rem;
+  margin-top: 0.25rem;
+}
+
+.login-security-note {
+  margin: 1.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
 }
 
 .error {

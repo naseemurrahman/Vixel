@@ -161,7 +161,7 @@ export function effectiveEntitlements(): LicenseEntitlements {
     maxCameras: 1,
     maxStorageTargets: 1,
     maxConcurrentJobs: 1,
-    features: ["local-storage"],
+    features: ["local-storage", "nvr"],
     notes: "Unlicensed evaluation mode",
   };
 }
@@ -197,7 +197,7 @@ export function ensureDevLicense(): void {
     maxCameras: 1000,
     maxStorageTargets: 50,
     maxConcurrentJobs: 8,
-    features: ["*", "s3", "sftp", "local-storage", "api"],
+    features: ["*", "s3", "sftp", "local-storage", "nvr", "api"],
     notes: "Auto-generated development license",
   };
   const priv = getDemoPrivateKeyPem();

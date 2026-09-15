@@ -18,7 +18,7 @@ export function StoragePage() {
   const [targets, setTargets] = useState<Target[]>([]);
   const [limits, setLimits] = useState({ used: 0, max: 1 });
   const [error, setError] = useState("");
-  const [type, setType] = useState<"local" | "s3" | "sftp">("local");
+  const [type, setType] = useState<"local" | "s3" | "sftp" | "nvr">("local");
   const [name, setName] = useState("");
   const [pathVal, setPathVal] = useState("./recordings/archive");
   const [s3, setS3] = useState({
@@ -35,6 +35,16 @@ export function StoragePage() {
     username: "",
     password: "",
     remoteDir: "/recordings",
+  });
+  const [nvr, setNvr] = useState({
+    protocol: "http_post" as "http_post" | "ftp" | "smb",
+    endpoint: "http://192.168.1.200/api/recordings/upload",
+    host: "192.168.1.200",
+    port: "80",
+    username: "admin",
+    password: "",
+    channelId: "1",
+    path: "/mnt/nvr/recordings",
   });
 
   async function refresh() {
@@ -67,6 +77,32 @@ export function StoragePage() {
         remoteDir: sftp.remoteDir,
       };
     }
+    if (type === "nvr") {
+      if (nvr.protocol === "http_post") {
+        config = {
+          protocol: nvr.protocol,
+          endpoint: nvr.endpoint,
+          username: nvr.username,
+          password: nvr.password,
+          channelId: nvr.channelId,
+        };
+      } else if (nvr.protocol === "ftp") {
+        config = {
+          protocol: nvr.protocol,
+          host: nvr.host,
+          port: Number(nvr.port || 21),
+          username: nvr.username,
+          password: nvr.password,
+          remoteDir: "/nvr/recordings",
+        };
+      } else {
+        config = {
+          protocol: nvr.protocol,
+          path: nvr.path,
+        };
+      }
+    }
+
     try {
       await api("/api/storage", {
         method: "POST",
@@ -87,38 +123,128 @@ export function StoragePage() {
 
   return (
     <>
-      <h1>Storage</h1>
+      <h1>Storage & NVR Delivery</h1>
       <p className="sub">
-        Compressed recordings upload to every enabled target · {limits.used}/{limits.max}
+        Compressed 80%+ recordings upload automatically to all enabled storage targets, NVR appliances, or cloud endpoints · {limits.used}/{limits.max}
       </p>
       {error ? <p className="error">{error}</p> : null}
 
       {canEdit ? (
         <div className="panel">
-          <h2>Add target</h2>
+          <h2>Add Target / NVR Destination</h2>
           <form onSubmit={onCreate}>
             <div className="row">
               <label>
                 Name
-                <input required value={name} onChange={(e) => setName(e.target.value)} />
+                <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Main Hikvision NVR or AWS Archive" />
               </label>
               <label>
                 Type
                 <select value={type} onChange={(e) => setType(e.target.value as typeof type)}>
-                  <option value="local">Local disk / NAS mount</option>
-                  <option value="s3">S3 / MinIO</option>
-                  <option value="sftp">SFTP</option>
+                  <option value="local">Local Disk / NAS NFS Mount</option>
+                  <option value="nvr">Network Video Recorder (NVR Appliance / Milestone / Synology)</option>
+                  <option value="s3">S3 / Cloud Object Storage / MinIO</option>
+                  <option value="sftp">SFTP Secure Transfer</option>
                 </select>
               </label>
             </div>
+
             {type === "local" ? (
               <div className="row">
                 <label>
-                  Path
+                  Archive Path
                   <input value={pathVal} onChange={(e) => setPathVal(e.target.value)} />
                 </label>
               </div>
             ) : null}
+
+            {type === "nvr" ? (
+              <div className="row">
+                <label>
+                  NVR Ingestion Protocol
+                  <select
+                    value={nvr.protocol}
+                    onChange={(e) => setNvr({ ...nvr, protocol: e.target.value as typeof nvr.protocol })}
+                  >
+                    <option value="http_post">HTTP REST / ISAPI / CGI Push</option>
+                    <option value="ftp">FTP Camera Offload</option>
+                    <option value="smb">Mounted NVR Share (SMB / CIFS / NFS)</option>
+                  </select>
+                </label>
+                {nvr.protocol === "http_post" ? (
+                  <>
+                    <label>
+                      HTTP API Ingest Endpoint
+                      <input
+                        value={nvr.endpoint}
+                        onChange={(e) => setNvr({ ...nvr, endpoint: e.target.value })}
+                        placeholder="http://192.168.1.200/api/recordings/upload"
+                      />
+                    </label>
+                    <label>
+                      Channel ID
+                      <input
+                        value={nvr.channelId}
+                        onChange={(e) => setNvr({ ...nvr, channelId: e.target.value })}
+                        placeholder="1"
+                      />
+                    </label>
+                  </>
+                ) : null}
+                {nvr.protocol === "ftp" ? (
+                  <>
+                    <label>
+                      NVR Host
+                      <input
+                        value={nvr.host}
+                        onChange={(e) => setNvr({ ...nvr, host: e.target.value })}
+                        placeholder="192.168.1.200"
+                      />
+                    </label>
+                    <label>
+                      Port
+                      <input
+                        value={nvr.port}
+                        onChange={(e) => setNvr({ ...nvr, port: e.target.value })}
+                        placeholder="21"
+                      />
+                    </label>
+                  </>
+                ) : null}
+                {nvr.protocol === "smb" ? (
+                  <label>
+                    Mount Directory
+                    <input
+                      value={nvr.path}
+                      onChange={(e) => setNvr({ ...nvr, path: e.target.value })}
+                      placeholder="/mnt/nvr/recordings"
+                    />
+                  </label>
+                ) : null}
+                {nvr.protocol !== "smb" ? (
+                  <>
+                    <label>
+                      Username
+                      <input
+                        value={nvr.username}
+                        onChange={(e) => setNvr({ ...nvr, username: e.target.value })}
+                        placeholder="admin"
+                      />
+                    </label>
+                    <label>
+                      Password
+                      <input
+                        type="password"
+                        value={nvr.password}
+                        onChange={(e) => setNvr({ ...nvr, password: e.target.value })}
+                        placeholder="NVR Password"
+                      />
+                    </label>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
             {type === "s3" ? (
               <div className="row">
                 <label>
@@ -158,6 +284,7 @@ export function StoragePage() {
                 </label>
               </div>
             ) : null}
+
             {type === "sftp" ? (
               <div className="row">
                 <label>
@@ -192,21 +319,22 @@ export function StoragePage() {
                 </label>
               </div>
             ) : null}
+
             <div className="row" style={{ marginTop: "0.75rem" }}>
-              <button type="submit">Add storage</button>
+              <button type="submit">Add Storage / NVR Target</button>
             </div>
           </form>
         </div>
       ) : null}
 
       <div className="panel">
-        <h2>Targets</h2>
+        <h2>Active Targets</h2>
         <table>
           <thead>
             <tr>
               <th>Name</th>
               <th>Type</th>
-              <th>Config</th>
+              <th>Destination Details</th>
               <th />
             </tr>
           </thead>
@@ -215,7 +343,9 @@ export function StoragePage() {
               <tr key={t.id}>
                 <td>{t.name}</td>
                 <td>
-                  <span className="badge ok">{t.type}</span>
+                  <span className={`badge ${t.type === "nvr" ? "warn" : "ok"}`}>
+                    {t.type === "nvr" ? "NVR Appliance" : t.type}
+                  </span>
                 </td>
                 <td className="mono">{JSON.stringify(t.config)}</td>
                 <td>
