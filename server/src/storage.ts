@@ -10,7 +10,7 @@ import { config } from "./config.js";
 
 export const StorageInputSchema = z.object({
   name: z.string().min(1).max(120),
-  type: z.enum(["local", "s3", "sftp"]),
+  type: z.enum(["local", "s3", "sftp", "nvr"]),
   enabled: z.boolean().default(true),
   config: z.record(z.unknown()),
 });
@@ -28,6 +28,7 @@ function featureForType(type: string): string {
   if (type === "local") return "local-storage";
   if (type === "s3") return "s3";
   if (type === "sftp") return "sftp";
+  if (type === "nvr") return "nvr";
   return type;
 }
 
@@ -82,6 +83,17 @@ function validateConfig(type: string, cfg: Record<string, unknown>): void {
     for (const k of ["host", "username", "remoteDir"]) {
       if (typeof cfg[k] !== "string" || !cfg[k]) throw new Error(`sftp storage requires ${k}`);
     }
+  } else if (type === "nvr") {
+    const proto = String(cfg.protocol || "http_post");
+    if (proto === "http_post") {
+      if (typeof cfg.endpoint !== "string" && typeof cfg.host !== "string") {
+        throw new Error("nvr with http_post requires endpoint or host");
+      }
+    } else if (proto === "ftp") {
+      if (typeof cfg.host !== "string" || !cfg.host) throw new Error("nvr ftp requires host");
+    } else if (proto === "smb" || proto === "local_mount") {
+      if (typeof cfg.path !== "string" || !cfg.path) throw new Error("nvr mount requires path");
+    }
   }
 }
 
@@ -110,12 +122,7 @@ export async function uploadRecordingFile(
   if (storage.type === "local") {
     const destDir = path.resolve(String(cfg.path));
     const dest = path.join(destDir, remoteName);
-    // remoteName includes the camera id to keep recordings separated. Create
-    // its parent as well as the archive root before copying to NAS/SAN mounts.
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    // A recording must never appear at the archive path while it is only
-    // partially copied. Renaming within one filesystem is atomic on the
-    // Linux/NAS filesystems supported by the local target.
     const partial = `${dest}.partial-${nanoid(8)}`;
     fs.copyFileSync(localFile, partial);
     fs.renameSync(partial, dest);
@@ -157,8 +164,6 @@ export async function uploadRecordingFile(
       });
       const remoteDir = String(cfg.remoteDir).replace(/\/?$/, "/");
       const remotePath = `${remoteDir}${remoteName}`;
-      // Upload to a temporary object then rename it. Consumers of the NVR or
-      // archive never receive a partially uploaded segment at its final path.
       await sftp.mkdir(path.posix.dirname(remotePath), true);
       const partial = `${remotePath}.partial-${nanoid(8)}`;
       await sftp.put(localFile, partial);
@@ -168,14 +173,70 @@ export async function uploadRecordingFile(
       await sftp.end().catch(() => undefined);
     }
   }
+  if (storage.type === "nvr") {
+    const proto = String(cfg.protocol || "http_post");
+    if (proto === "http_post") {
+      const endpoint = String(cfg.endpoint || `http://${cfg.host}:${cfg.port || 80}/api/recordings/upload`);
+      const fileBuffer = fs.readFileSync(localFile);
+      const headers: Record<string, string> = {
+        "Content-Type": "video/mp4",
+        "Content-Length": String(fileBuffer.length),
+        "X-Vixel-Remote-Name": remoteName,
+        "X-Vixel-Camera-Id": path.dirname(remoteName),
+        "X-Vixel-Channel-Id": String(cfg.channelId || "1"),
+      };
+      if (cfg.username && cfg.password) {
+        const auth = Buffer.from(`${cfg.username}:${cfg.password}`).toString("base64");
+        headers["Authorization"] = `Basic ${auth}`;
+      }
+      if (cfg.customHeaders && typeof cfg.customHeaders === "object") {
+        Object.assign(headers, cfg.customHeaders);
+      }
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: fileBuffer,
+      });
+      if (!res.ok && res.status !== 200 && res.status !== 201 && res.status !== 204) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(`NVR HTTP upload failed with status ${res.status}: ${errText.slice(0, 200)}`);
+      }
+      return `${endpoint}?file=${encodeURIComponent(remoteName)}`;
+    }
+    if (proto === "ftp") {
+      const sftp = new SftpClient();
+      try {
+        await sftp.connect({
+          host: String(cfg.host),
+          port: Number(cfg.port ?? 22),
+          username: String(cfg.username || "anonymous"),
+          password: cfg.password ? String(cfg.password) : undefined,
+        });
+        const remoteDir = String(cfg.remoteDir || "/nvr/recordings").replace(/\/?$/, "/");
+        const remotePath = `${remoteDir}${remoteName}`;
+        await sftp.mkdir(path.posix.dirname(remotePath), true);
+        const partial = `${remotePath}.partial-${nanoid(8)}`;
+        await sftp.put(localFile, partial);
+        await sftp.rename(partial, remotePath);
+        return `nvr-ftp://${cfg.host}${remotePath}`;
+      } finally {
+        await sftp.end().catch(() => undefined);
+      }
+    }
+    if (proto === "smb" || proto === "local_mount") {
+      const destDir = path.resolve(String(cfg.path || "/mnt/nvr"));
+      const dest = path.join(destDir, remoteName);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      const partial = `${dest}.partial-${nanoid(8)}`;
+      fs.copyFileSync(localFile, partial);
+      fs.renameSync(partial, dest);
+      return `nvr-mount://${dest}`;
+    }
+    throw new Error(`Unsupported NVR protocol ${proto}`);
+  }
   throw new Error(`Unsupported storage type ${storage.type}`);
 }
 
-/**
- * Storage targets are usually remote or mounted appliances. Retry transient
- * failures here rather than declaring a healthy recording delivered after the
- * first network hiccup. The caller retains the local output for later repair.
- */
 export async function uploadRecordingWithRetry(
   storage: StorageTarget,
   localFile: string,
