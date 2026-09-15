@@ -61,7 +61,7 @@ The `zipstream` name means **Zipstream-inspired**, not Axis Zipstream. Vixel is 
 - **Deployment:** Linux/Docker
 - **Storage:** local/NAS, S3/MinIO, SFTP
 - **Input:** RTSP / RTSPS
-- **Output:** MP4, H.265/H.264/AV1
+- **Output:** MP4, H.265/H.264/AV1 (software), plus hardware-accelerated H.265/H.264 via Intel Quick Sync, NVIDIA NVENC, or VAAPI where the host provides it (see `GET /api/system/encoders`)
 
 See [the production architecture](PRODUCTION_ARCHITECTURE.md) for the edge
 pipeline, mathematically defined compression constraints, storage/NVR delivery
@@ -225,7 +225,7 @@ docker-compose.yml
 
 ## Roadmap
 
-- Hardware-accelerated H.265/AV1 profiles for Intel, NVIDIA and AMD
+- [x] Hardware-accelerated H.265/H.264 profiles for Intel (Quick Sync/VAAPI), NVIDIA (NVENC) and AMD (VAAPI) — AV1 hardware encode is not yet included since consumer AV1 encode support is still uneven across GPUs
 - Per-camera adaptive CRF controller
 - Motion/ROI maps for high-value regions
 - Two-stage analysis mode for long static intervals

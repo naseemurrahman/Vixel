@@ -60,11 +60,16 @@ export function CamerasPage() {
     setLimits(res.limits);
   }
 
+  const [hwEncoders, setHwEncoders] = useState<string[]>([]);
+
   useEffect(() => {
     refresh().catch((e) => setError(e.message));
     api<{ strategies: Strategy[] }>("/api/compression/strategies")
       .then((r) => setStrategies(r.strategies))
       .catch(() => setStrategies([]));
+    api<{ available: string[] }>("/api/system/encoders")
+      .then((r) => setHwEncoders(r.available))
+      .catch(() => setHwEncoders([]));
   }, []);
 
   function onProfileChange(profile: string) {
@@ -237,9 +242,15 @@ export function CamerasPage() {
                   value={form.codec}
                   onChange={(e) => setForm({ ...form, codec: e.target.value })}
                 >
-                  <option value="libx265">H.265</option>
-                  <option value="libx264">H.264</option>
-                  <option value="libsvtav1">AV1</option>
+                  <option value="libx265">H.265 (software)</option>
+                  <option value="libx264">H.264 (software)</option>
+                  <option value="libsvtav1">AV1 (software)</option>
+                  {hwEncoders.includes("hevc_qsv") && <option value="hevc_qsv">H.265 (Intel Quick Sync)</option>}
+                  {hwEncoders.includes("h264_qsv") && <option value="h264_qsv">H.264 (Intel Quick Sync)</option>}
+                  {hwEncoders.includes("hevc_nvenc") && <option value="hevc_nvenc">H.265 (NVIDIA NVENC)</option>}
+                  {hwEncoders.includes("h264_nvenc") && <option value="h264_nvenc">H.264 (NVIDIA NVENC)</option>}
+                  {hwEncoders.includes("hevc_vaapi") && <option value="hevc_vaapi">H.265 (VAAPI)</option>}
+                  {hwEncoders.includes("h264_vaapi") && <option value="h264_vaapi">H.264 (VAAPI)</option>}
                 </select>
               </label>
               <label>

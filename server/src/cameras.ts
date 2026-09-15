@@ -1,8 +1,10 @@
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
+  ALL_CODECS,
   COMPRESSION_PROFILES,
   profileDefaults,
+  type CodecId,
   type CompressionProfile,
 } from "./compression-strategy.js";
 import { audit, db, nowIso } from "./db.js";
@@ -17,7 +19,7 @@ export const CameraInputSchema = z.object({
   enabled: z.boolean().default(true),
   segmentSeconds: z.number().int().min(30).max(3600).default(300),
   crf: z.number().int().min(18).max(40).optional(),
-  codec: z.enum(["libx265", "libx264", "libsvtav1"]).default("libx265"),
+  codec: z.enum(ALL_CODECS).default("libx265"),
   preset: z.string().default("medium"),
   audio: z.boolean().default(false),
   compressionProfile: z.enum(COMPRESSION_PROFILES).default("zipstream"),
@@ -143,7 +145,7 @@ export function updateCamera(
     enabled: input.enabled ?? Boolean(existing.enabled),
     segmentSeconds: input.segmentSeconds ?? existing.segment_seconds,
     crf: input.crf ?? existing.crf,
-    codec: (input.codec ?? existing.codec) as "libx265" | "libx264" | "libsvtav1",
+    codec: (input.codec ?? existing.codec) as CodecId,
     preset: input.preset ?? existing.preset,
     audio: input.audio ?? Boolean(existing.audio),
     compressionProfile: (input.compressionProfile ??

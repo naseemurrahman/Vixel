@@ -4,7 +4,7 @@ import path from "node:path";
 import { nanoid } from "nanoid";
 import type { Camera } from "./cameras.js";
 import { getCamera, listCameras } from "./cameras.js";
-import { buildEncodeArgs, buildStrategy, compressionRatio, type CompressionProfile } from "./compression-strategy.js";
+import { buildEncodeArgs, buildHwAccelArgs, buildStrategy, compressionRatio, HARDWARE_CODECS, type CompressionProfile } from "./compression-strategy.js";
 import { config } from "./config.js";
 import { db, nowIso } from "./db.js";
 import { effectiveEntitlements } from "./license.js";
@@ -89,7 +89,11 @@ export async function compressSegment(camera: Camera): Promise<{
     db.prepare(`UPDATE recordings SET status="compressing" WHERE id=?`).run(recordingId);
 
     // Stage B: scene-aware temporal reduction + I/P/B GoV + adaptive quantization.
-    await runFfmpeg(["-hide_banner", "-loglevel", "error", "-i", rawPath, ...buildEncodeArgs(input), "-y", outPath], track);
+    // Hardware encoders (QSV/NVENC/VAAPI) need any device-init args before -i.
+    await runFfmpeg([
+      "-hide_banner", "-loglevel", "error", ...buildHwAccelArgs(input), "-i", rawPath,
+      ...buildEncodeArgs(input), "-y", outPath,
+    ], track);
     active.delete(camera.id);
     if (!fs.existsSync(outPath)) throw new Error("Encode produced no output file");
 
@@ -154,6 +158,32 @@ async function uploadToAllTargets(recordingId: string, cameraId: string, localFi
     failures === 0 ? "uploaded" : "upload_failed",
     recordingId
   );
+}
+
+let hwEncoderCache: { at: number; encoders: string[] } | null = null;
+
+/**
+ * Probes `ffmpeg -encoders` for which hardware encoders this host can actually
+ * use. Vixel never assumes a GPU/driver is present just because a codec name
+ * exists — an unavailable hardware encoder should be rejected by the API
+ * before a camera is misconfigured, not discovered as a runtime failure.
+ * Cached briefly since the host's encoder set doesn't change at runtime.
+ */
+export function detectHardwareEncoders(maxAgeMs = 60_000): Promise<string[]> {
+  if (hwEncoderCache && Date.now() - hwEncoderCache.at < maxAgeMs) {
+    return Promise.resolve(hwEncoderCache.encoders);
+  }
+  return new Promise((resolve) => {
+    const proc = spawn(config.ffmpegPath, ["-hide_banner", "-encoders"], { windowsHide: true });
+    let stdout = "";
+    proc.stdout?.on("data", (d) => { stdout += d.toString(); });
+    proc.on("error", () => resolve([]));
+    proc.on("close", () => {
+      const found = HARDWARE_CODECS.filter((name) => stdout.includes(name));
+      hwEncoderCache = { at: Date.now(), encoders: found };
+      resolve(found);
+    });
+  });
 }
 
 export function stopCameraJob(cameraId: string): boolean {

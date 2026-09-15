@@ -12,6 +12,41 @@
 export const COMPRESSION_PROFILES = ["zipstream", "balanced", "forensic"] as const;
 export type CompressionProfile = (typeof COMPRESSION_PROFILES)[number];
 
+/** Software encoders: always available in the Vixel container, no GPU required. */
+export const SOFTWARE_CODECS = ["libx265", "libx264", "libsvtav1"] as const;
+
+/**
+ * Hardware-accelerated encoders. These trade a small amount of compression
+ * efficiency (vs. slow software presets) for large throughput/CPU gains, which
+ * matters once a server holds more than a handful of concurrent camera jobs.
+ * Vixel probes for real availability at runtime (see detectHardwareEncoders in
+ * compress.ts) rather than assuming the host has a given GPU/driver.
+ */
+export const HARDWARE_CODECS = [
+  "h264_qsv", "hevc_qsv",       // Intel Quick Sync
+  "h264_nvenc", "hevc_nvenc",   // NVIDIA NVENC
+  "h264_vaapi", "hevc_vaapi",   // VAAPI (Intel iGPU / AMD)
+] as const;
+
+export const ALL_CODECS = [...SOFTWARE_CODECS, ...HARDWARE_CODECS] as const;
+export type CodecId = (typeof ALL_CODECS)[number];
+
+export function isHardwareCodec(codec: string): codec is (typeof HARDWARE_CODECS)[number] {
+  return (HARDWARE_CODECS as readonly string[]).includes(codec);
+}
+
+export type EncoderFamily = "x265" | "x264" | "svtav1" | "qsv" | "nvenc" | "vaapi";
+
+export function encoderFamily(codec: string): EncoderFamily {
+  if (codec === "libx265") return "x265";
+  if (codec === "libx264") return "x264";
+  if (codec === "libsvtav1") return "svtav1";
+  if (codec.endsWith("_qsv")) return "qsv";
+  if (codec.endsWith("_nvenc")) return "nvenc";
+  if (codec.endsWith("_vaapi")) return "vaapi";
+  throw new Error(`Unknown codec: ${codec}`);
+}
+
 export type StrategyInput = {
   codec: string;
   preset: string;
@@ -119,15 +154,62 @@ export function buildStrategy(input: StrategyInput): StrategyPlan {
   };
 }
 
+/** Software preset names (x264/x265) mapped onto each hardware encoder's own preset scale. */
+const NVENC_PRESET: Record<string, string> = {
+  ultrafast: "p1", superfast: "p1", veryfast: "p2", faster: "p3", fast: "p4",
+  medium: "p5", slow: "p6", slower: "p7", veryslow: "p7",
+};
+function normalizePreset(family: EncoderFamily, preset: string): string {
+  if (family === "nvenc") return NVENC_PRESET[preset] ?? (/^p[1-7]$/.test(preset) ? preset : "p5");
+  if (family === "qsv") return preset; // QSV accepts the same veryfast..veryslow names as libx264/x265
+  return preset;
+}
+
+/**
+ * Global/input-side ffmpeg arguments that must appear BEFORE `-i <source>`,
+ * e.g. VAAPI device initialization. Software and QSV/NVENC codecs need none.
+ */
+export function buildHwAccelArgs(input: StrategyInput, vaapiDevice = "/dev/dri/renderD128"): string[] {
+  if (encoderFamily(input.codec) === "vaapi") return ["-vaapi_device", vaapiDevice];
+  return [];
+}
+
 /** FFmpeg output arguments after -i <source>. */
 export function buildEncodeArgs(input: StrategyInput): string[] {
   const plan = buildStrategy(input);
+  const family = encoderFamily(input.codec);
+  const filters = [...plan.videoFilters];
+
   const args: string[] = [];
-  if (plan.videoFilters.length) args.push("-vf", plan.videoFilters.join(","));
-  args.push("-map", "0:v:0", "-c:v", input.codec, "-preset", input.preset, "-crf", String(input.crf), "-pix_fmt", "yuv420p");
-  if (input.codec === "libx265") args.push("-tag:v", "hvc1", "-x265-params", plan.x265Params);
-  else if (input.codec === "libx264") args.push("-x264-params", plan.x264Params);
-  else if (input.codec === "libsvtav1") args.push(...plan.svtav1Params);
+  args.push("-map", "0:v:0");
+
+  if (family === "x265" || family === "x264" || family === "svtav1") {
+    if (filters.length) args.push("-vf", filters.join(","));
+    args.push("-c:v", input.codec, "-preset", input.preset, "-crf", String(input.crf), "-pix_fmt", "yuv420p");
+    if (family === "x265") args.push("-tag:v", "hvc1", "-x265-params", plan.x265Params);
+    else if (family === "x264") args.push("-x264-params", plan.x264Params);
+    else args.push(...plan.svtav1Params);
+  } else if (family === "qsv") {
+    // QSV exposes an x264/x265-like CRF-equivalent as -global_quality; ICQ mode
+    // keeps behavior close to the software CRF curve without a fixed bitrate.
+    if (filters.length) args.push("-vf", filters.join(","));
+    args.push("-c:v", input.codec, "-preset", normalizePreset(family, input.preset),
+      "-look_ahead", "1", "-global_quality", String(input.crf), "-g", String(input.gopSize),
+      "-bf", String(input.bframes), "-pix_fmt", "nv12");
+  } else if (family === "nvenc") {
+    if (filters.length) args.push("-vf", filters.join(","));
+    args.push("-c:v", input.codec, "-preset", normalizePreset(family, input.preset),
+      "-rc", "vbr", "-cq", String(input.crf), "-b:v", "0", "-g", String(input.gopSize),
+      "-bf", String(input.bframes), "-spatial-aq", "1", "-temporal-aq", "1",
+      "-rc-lookahead", String(input.profile === "zipstream" ? 32 : 20), "-pix_fmt", "yuv420p");
+  } else {
+    // VAAPI: frames must be uploaded to the device surface; software filters
+    // (scene/select/mpdecimate/denoise) run first on the CPU, then hwupload.
+    filters.push("format=nv12", "hwupload");
+    args.push("-vf", filters.join(","));
+    args.push("-c:v", input.codec, "-qp", String(input.crf), "-g", String(input.gopSize), "-bf", String(input.bframes));
+  }
+
   // VFR is intentional: dropped static frames retain their source PTS.
   args.push("-fps_mode", "vfr", "-movflags", "+faststart");
   if (input.audio) args.push("-map", "0:a:0?", "-c:a", "aac", "-b:a", "64k", "-ac", "1");

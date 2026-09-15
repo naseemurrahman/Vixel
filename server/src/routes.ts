@@ -12,6 +12,7 @@ import {
 } from "./cameras.js";
 import {
   compressSegment,
+  detectHardwareEncoders,
   getActiveJobs,
   listRecordings,
   startCameraLoop,
@@ -30,7 +31,7 @@ import {
   setSetting,
   systemLog,
 } from "./logs.js";
-import { listStrategyDocs } from "./compression-strategy.js";
+import { isHardwareCodec, listStrategyDocs } from "./compression-strategy.js";
 import {
   effectiveEntitlements,
   getInstalledLicense,
@@ -236,9 +237,22 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     },
   }));
 
+  app.get("/api/system/encoders", { preHandler: [app.authenticate] }, async () => ({
+    available: await detectHardwareEncoders(),
+    note: "Software encoders (libx265/libx264/libsvtav1) always work. Hardware encoders require a matching GPU/driver in the Vixel host or container.",
+  }));
+
   app.post("/api/cameras", { preHandler: [app.requireRole("operator")] }, async (req, reply) => {
     try {
       const input = CameraInputSchema.parse(req.body);
+      if (isHardwareCodec(input.codec)) {
+        const available = await detectHardwareEncoders();
+        if (!available.includes(input.codec)) {
+          return reply.code(400).send({
+            error: `Hardware encoder ${input.codec} is not available on this Vixel host. Available: ${available.join(", ") || "none"}.`,
+          });
+        }
+      }
       const cam = createCamera(input, actorOf(req));
       if (cam.enabled) startCameraLoop(cam.id);
       systemLog("info", "cameras", `Camera added: ${cam.name}`);
@@ -252,6 +266,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const { id } = req.params as { id: string };
     try {
       const input = CameraInputSchema.partial().parse(req.body);
+      if (input.codec && isHardwareCodec(input.codec)) {
+        const available = await detectHardwareEncoders();
+        if (!available.includes(input.codec)) {
+          return reply.code(400).send({
+            error: `Hardware encoder ${input.codec} is not available on this Vixel host. Available: ${available.join(", ") || "none"}.`,
+          });
+        }
+      }
       const cam = updateCamera(id, input, actorOf(req));
       stopCameraLoop(id);
       if (cam.enabled) startCameraLoop(id);

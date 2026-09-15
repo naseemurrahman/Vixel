@@ -14,3 +14,4 @@ web/dist/
 server/dist/
 coverage/
 tmp/
+*.tsbuildinfo
