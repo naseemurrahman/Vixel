@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { config } from "./config.js";
-import { getActiveJobs, listRecordings } from "./compress.js";
+import { getActiveJobs, getActiveOutputBytes, listRecordings } from "./compress.js";
 import { listCameras } from "./cameras.js";
 import { db, nowIso } from "./db.js";
 
@@ -24,6 +24,22 @@ let lastCpu = process.cpuUsage();
 let lastHr = process.hrtime.bigint();
 let lastBytesOutTotal = 0;
 let timer: NodeJS.Timeout | null = null;
+
+type CpuTotals = { idle: number; total: number };
+
+function cpuTotals(): CpuTotals {
+  return os.cpus().reduce(
+    (total, cpu) => {
+      const times = cpu.times;
+      total.idle += times.idle;
+      total.total += times.user + times.nice + times.sys + times.idle + times.irq;
+      return total;
+    },
+    { idle: 0, total: 0 }
+  );
+}
+
+let lastHostCpu = cpuTotals();
 
 function dirSizeMb(dir: string): number {
   let total = 0;
@@ -54,7 +70,7 @@ function bytesOutSum(): number {
   const row = db
     .prepare(`SELECT COALESCE(SUM(bytes_out), 0) AS s FROM recordings WHERE bytes_out IS NOT NULL`)
     .get() as { s: number };
-  return Number(row.s) || 0;
+  return (Number(row.s) || 0) + getActiveOutputBytes();
 }
 
 function avgCompressionPct(): number {
@@ -68,15 +84,24 @@ function avgCompressionPct(): number {
 }
 
 export function collectSample(): MetricSample {
-  const cpu = process.cpuUsage(lastCpu);
+  const processCpu = process.cpuUsage(lastCpu);
   const hr = process.hrtime.bigint();
   const elapsedUs = Number(hr - lastHr) / 1000;
   lastCpu = process.cpuUsage();
   lastHr = hr;
-  const cpuPct =
+  const processCpuPct =
     elapsedUs > 0
-      ? Math.min(100, Math.round(((cpu.user + cpu.system) / elapsedUs) * 1000) / 10)
+      ? Math.min(100, Math.round(((processCpu.user + processCpu.system) / elapsedUs) * 1000) / 10)
       : 0;
+
+  const hostCpu = cpuTotals();
+  const hostTotalDelta = hostCpu.total - lastHostCpu.total;
+  const hostIdleDelta = hostCpu.idle - lastHostCpu.idle;
+  lastHostCpu = hostCpu;
+  const cpuPct =
+    hostTotalDelta > 0
+      ? Math.round((1 - hostIdleDelta / hostTotalDelta) * 1000) / 10
+      : processCpuPct;
 
   const mem = process.memoryUsage();
   const memUsedMb = Math.round((mem.heapUsed / (1024 * 1024)) * 10) / 10;

@@ -23,7 +23,8 @@ import {
 type ActiveJob = {
   cameraId: string;
   recordingId: string;
-  proc: ReturnType<typeof spawn>;
+  outputPath: string;
+  procs: Set<ReturnType<typeof spawn>>;
 };
 
 const active = new Map<string, ActiveJob>();
@@ -104,13 +105,18 @@ export async function compressSegment(camera: Camera): Promise<{
      VALUES (?, ?, 'capturing', ?, ?, ?)`
   ).run(recordingId, camera.id, rawPath, outPath, nowIso());
 
+  const job: ActiveJob = { cameraId: camera.id, recordingId, outputPath: outPath, procs: new Set() };
   const track = (proc: ReturnType<typeof spawn>) => {
-    active.set(camera.id, { cameraId: camera.id, recordingId, proc });
+    job.procs.add(proc);
+    active.set(camera.id, job);
   };
 
   try {
-    // Stage A — capture exact camera payload for measurement + offline encode
-    await runFfmpeg(
+    // Record the source baseline and encode at the same time. This keeps the
+    // compressor live for the full recording interval instead of waiting for a
+    // completed source segment before beginning the encode.
+    await Promise.all([
+      runFfmpeg(
       [
         "-hide_banner",
         "-loglevel",
@@ -129,29 +135,30 @@ export async function compressSegment(camera: Camera): Promise<{
         rawPath,
       ],
       track
-    );
+      ),
+      runFfmpeg(
+        [
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-rtsp_transport",
+          "tcp",
+          "-i",
+          camera.rtsp_url,
+          "-t",
+          String(camera.segment_seconds),
+          ...buildEncodeArgs(input),
+          "-y",
+          outPath,
+        ],
+        track
+      ),
+    ]);
 
     const bytesIn = fileSize(rawPath);
     if (bytesIn < 1024) {
       throw new Error("Source capture too small — check RTSP URL / camera reachability");
     }
-
-    db.prepare(`UPDATE recordings SET status='compressing' WHERE id=?`).run(recordingId);
-
-    // Stage B — Zipstream-class re-encode (I/P/B GoV + static decimation + AQ)
-    await runFfmpeg(
-      [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        rawPath,
-        ...buildEncodeArgs(input),
-        "-y",
-        outPath,
-      ],
-      track
-    );
 
     active.delete(camera.id);
 
@@ -197,6 +204,9 @@ export async function compressSegment(camera: Camera): Promise<{
       strategy: plan.description,
     };
   } catch (e) {
+    for (const proc of job.procs) {
+      if (!proc.killed) proc.kill("SIGTERM");
+    }
     active.delete(camera.id);
     const msg = e instanceof Error ? e.message : String(e);
     db.prepare(
@@ -231,7 +241,7 @@ async function uploadToAllTargets(
 export function stopCameraJob(cameraId: string): boolean {
   const job = active.get(cameraId);
   if (!job) return false;
-  job.proc.kill("SIGTERM");
+  for (const proc of job.procs) proc.kill("SIGTERM");
   active.delete(cameraId);
   return true;
 }
@@ -241,6 +251,10 @@ export function getActiveJobs() {
     cameraId: j.cameraId,
     recordingId: j.recordingId,
   }));
+}
+
+export function getActiveOutputBytes(): number {
+  return [...active.values()].reduce((total, job) => total + fileSize(job.outputPath), 0);
 }
 
 const loops = new Map<string, { stop: boolean }>();
