@@ -478,6 +478,35 @@ th {
   font-size: 0.82rem;
 }
 
+/* Enterprise workspace layout */
+.shell { grid-template-columns: 248px minmax(0, 1fr); }
+.nav { padding: 1.75rem 1.1rem; }
+.nav a { padding: 0.7rem 0.8rem; }
+.main { width: min(100%, 1440px); max-width: 1440px; padding: 2.5rem clamp(1.5rem, 4vw, 4rem) 4rem; }
+h1 { margin: 0; font-size: 1.85rem; }
+.sub { margin: 0; }
+.page-heading { margin: 0.45rem 0 2rem; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.25rem; }
+.metric-grid .stat { min-height: 122px; padding: 1.25rem; }
+.content-section { margin-top: 2.5rem; }
+.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.section-heading h2 { margin: 0 0 0.35rem; font-size: 1.08rem; }
+.section-heading p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.host-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.host-grid > div { display: grid; gap: 0.4rem; padding: 1rem 1.1rem; border-bottom: 1px solid var(--line); }
+.host-grid > div:nth-child(odd) { border-right: 1px solid var(--line); }
+.host-grid span { color: var(--muted); font-size: 0.8rem; }
+.host-grid strong, .live-summary strong { font-family: "DejaVu Sans", sans-serif; font-size: 0.9rem; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.table-wrap table { min-width: 680px; }
+.table-wrap th, .table-wrap td { padding: 0.85rem 1rem; }
+.table-wrap tr:last-child td { border-bottom: 0; }
+.empty-state { color: var(--muted); text-align: center; padding: 2rem !important; }
+.loading-state { margin-top: 3rem; }
+.form-panel { max-width: 1100px; }
+.form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; align-items: end; }
+.form-action { display: flex; align-items: end; }
+
 @media (max-width: 800px) {
   .shell {
     grid-template-columns: 1fr;
@@ -502,4 +531,7 @@ th {
   .live-summary {
     grid-template-columns: 1fr;
   }
+  .host-grid, .form-grid { grid-template-columns: 1fr; }
+  .host-grid > div:nth-child(odd) { border-right: 0; }
+  .host-grid > div:last-child { border-bottom: 0; }
 }

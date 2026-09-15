@@ -68,15 +68,13 @@ export function UsersPage() {
 
   return (
     <>
-      <h1>Users & roles</h1>
-      <p className="sub">
-        Admin · Operator · Viewer — signed in as {me?.username} ({me?.role})
-      </p>
+      <h1>Access management</h1>
+      <p className="sub">Manage application accounts and access levels.</p>
       {error ? <p className="error">{error}</p> : null}
 
-      <div className="panel">
+      <div className="panel form-panel">
         <h2>Create user</h2>
-        <form className="row" onSubmit={onCreate}>
+        <form className="form-grid" onSubmit={onCreate}>
           <label>
             Username
             <input
@@ -122,13 +120,13 @@ export function UsersPage() {
               onChange={(e) => setForm({ ...form, password: e.target.value })}
             />
           </label>
-          <button type="submit">Create</button>
+          <div className="form-action"><button type="submit">Add user</button></div>
         </form>
       </div>
 
-      <div className="panel">
-        <h2>Accounts</h2>
-        <table>
+      <section className="content-section">
+        <div className="section-heading"><div><h2>Accounts</h2><p>{users.length} account{users.length === 1 ? "" : "s"}</p></div></div>
+        <div className="table-wrap"><table>
           <thead>
             <tr>
               <th>User</th>
@@ -177,8 +175,8 @@ export function UsersPage() {
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
+        </table></div>
+      </section>
     </>
   );
 }

@@ -41,6 +41,7 @@ import {
 import {
   getLatestSample,
   getRecentSamples,
+  getHostSnapshot,
   getUsageSummary,
 } from "./metrics.js";
 import {
@@ -408,6 +409,13 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/dashboard", { preHandler: [app.authenticate] }, async () => {
     const cams = listCameras();
     const recs = listRecordings(100);
+    const activeJobs = getActiveJobs();
+    const activeCameraIds = new Set(activeJobs.map((job) => job.cameraId));
+    const latestByCamera = new Map<string, (typeof recs)[number]>();
+    for (const recording of recs) {
+      const cameraId = (recording as { camera_id: string }).camera_id;
+      if (!latestByCamera.has(cameraId)) latestByCamera.set(cameraId, recording);
+    }
     const uploaded = recs.filter((r) => (r as { status: string }).status === "uploaded").length;
     const failed = recs.filter((r) => (r as { status: string }).status === "failed").length;
     const ratios = recs
@@ -420,10 +428,31 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       recordings: { recent: recs.length, uploaded, failed },
       compression: { averagePercent: Math.round(avgRatio * 1000) / 10 },
       license: effectiveEntitlements(),
-      activeJobs: getActiveJobs(),
+      activeJobs,
       openAlerts,
       latestMetrics: getLatestSample(),
-      users: listUsers().length,
+      host: getHostSnapshot(),
+      cameraStatus: cams.map((camera) => {
+        const latest = latestByCamera.get(camera.id) as
+          | { status: string; started_at: string; finished_at: string | null; compression_ratio: number | null }
+          | undefined;
+        return {
+          id: camera.id,
+          name: camera.name,
+          enabled: Boolean(camera.enabled),
+          state: activeCameraIds.has(camera.id)
+            ? "compressing"
+            : camera.enabled
+              ? "waiting"
+              : "paused",
+          lastActivityAt: latest?.finished_at ?? latest?.started_at ?? null,
+          lastResult: latest?.status ?? null,
+          compressionPercent:
+            latest?.compression_ratio != null
+              ? Math.round(latest.compression_ratio * 1000) / 10
+              : null,
+        };
+      }),
     };
   });
 

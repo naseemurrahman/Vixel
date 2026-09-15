@@ -18,6 +18,18 @@ export type MetricSample = {
   diskRecordingsMb: number;
 };
 
+export type HostSnapshot = {
+  hostname: string;
+  platform: string;
+  architecture: string;
+  cpuModel: string;
+  cpuCores: number;
+  memoryTotalMb: number;
+  memoryFreeMb: number;
+  uptimeSeconds: number;
+  nodeVersion: string;
+};
+
 const MAX_SAMPLES = 180; // ~6 min at 2s
 const samples: MetricSample[] = [];
 let lastCpu = process.cpuUsage();
@@ -171,6 +183,21 @@ export function getRecentSamples(limit = 90): MetricSample[] {
 
 export function getLatestSample(): MetricSample | null {
   return samples[samples.length - 1] ?? getRecentSamples(1)[0] ?? null;
+}
+
+export function getHostSnapshot(): HostSnapshot {
+  const cpus = os.cpus();
+  return {
+    hostname: os.hostname(),
+    platform: `${os.type()} ${os.release()}`,
+    architecture: os.arch(),
+    cpuModel: cpus[0]?.model ?? "Unknown processor",
+    cpuCores: cpus.length,
+    memoryTotalMb: Math.round(os.totalmem() / (1024 * 1024)),
+    memoryFreeMb: Math.round(os.freemem() / (1024 * 1024)),
+    uptimeSeconds: Math.round(os.uptime()),
+    nodeVersion: process.version,
+  };
 }
 
 export function startMetricsCollector(intervalMs = 2000): void {
